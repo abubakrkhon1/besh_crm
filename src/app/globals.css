@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #fafafa;
+    --foreground: #09090b;
+    --muted-foreground: #71717a;
+    --surface: #ffffff;
+    --surface-raised: #f4f4f5;
+    --border: #e4e4e7;
+    --primary: #f59e0b;
+    --primary-dim: rgba(245, 158, 11, 0.12);
+    --accent: #3f3f46;
+  }
+
+  .dark {
+    --background: #09090b;
+    --foreground: #fafafa;
+    --muted-foreground: #a1a1aa;
+    --surface: #18181b;
+    --surface-raised: #27272a;
+    --border: #27272a;
+    --primary: #f59e0b;
+    --primary-dim: rgba(245, 158, 11, 0.12);
+    --accent: #a1a1aa;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased overflow-x-hidden;
+  }
+  html {
+    @apply overflow-x-hidden;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50 transition-colors;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-md border border-border bg-transparent px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border disabled:pointer-events-none disabled:opacity-50 transition-colors;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center rounded-md bg-red-500/10 text-red-500 border border-transparent px-4 py-2 text-sm font-medium hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 disabled:pointer-events-none disabled:opacity-50 transition-colors;
+  }
+  .input-field {
+    @apply flex h-10 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 transition-colors;
+  }
+  .card {
+    @apply rounded-xl border border-border bg-surface shadow-sm;
+  }
+  .glass-panel {
+    @apply bg-background backdrop-blur-lg border border-border;
+  }
+}
