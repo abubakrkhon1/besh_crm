@@ -1,124 +1,100 @@
-import { getDashboardStats, getApplications } from '@/app/actions/applications'
 import Link from 'next/link'
-import { ArrowRight, FileText, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { Activity, AlertTriangle, CreditCard, DollarSign, Users } from 'lucide-react'
+import { MetricCard } from '@/components/crm/ui/MetricCard'
+import { ActivityTimeline } from '@/components/crm/ui/ActivityTimeline'
+import { StatusBadge } from '@/components/crm/ui/StatusBadge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { buttonVariants } from '@/components/ui/button'
+import { currency, getDashboardOverview } from '@/lib/mock-data'
 
-export default async function DashboardPage() {
-  const stats = await getDashboardStats()
-  const recentApplications = (await getApplications()).slice(0, 5)
+export default function DashboardPage() {
+  const overview = getDashboardOverview()
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-bold font-sans tracking-tight text-foreground">Dashboard Overview</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Welcome back. Here is what is happening with fuel card applications today.
-        </p>
+    <div className="animate-fade-in pb-12">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Operations Dashboard</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Live fleet credit, card, transaction, and risk activity across Fuel CRM.
+          </p>
+        </div>
+        <Link href="/crm/customers" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          View customers
+        </Link>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="card p-6 border-l-4 border-l-slate-500">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <FileText className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-muted-foreground truncate">Total Applications</dt>
-                <dd className="text-2xl font-semibold text-foreground">{stats.total}</dd>
-              </dl>
-            </div>
-          </div>
-        </div>
-
-        <div className="card p-6 border-l-4 border-l-primary">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <Clock className="h-6 w-6 text-primary" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-muted-foreground truncate">Pending Review</dt>
-                <dd className="text-2xl font-semibold text-foreground">{stats.pending}</dd>
-              </dl>
-            </div>
-          </div>
-        </div>
-
-        <div className="card p-6 border-l-4 border-l-green-500">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <CheckCircle className="h-6 w-6 text-green-500" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-muted-foreground truncate">Approved</dt>
-                <dd className="text-2xl font-semibold text-foreground">{stats.approved}</dd>
-              </dl>
-            </div>
-          </div>
-        </div>
-
-        <div className="card p-6 border-l-4 border-l-red-500">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <XCircle className="h-6 w-6 text-red-500" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-muted-foreground truncate">Denied</dt>
-                <dd className="text-2xl font-semibold text-foreground">{stats.denied}</dd>
-              </dl>
-            </div>
-          </div>
-        </div>
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="Total Customers" value={overview.totalCustomers} icon={<Users className="size-5" />} />
+        <MetricCard title="Active Customers" value={overview.activeCustomers} icon={<Users className="size-5" />} />
+        <MetricCard title="Pending Customers" value={overview.pendingCustomers} icon={<Activity className="size-5" />} />
+        <MetricCard title="Suspended Customers" value={overview.suspendedCustomers} icon={<AlertTriangle className="size-5" />} />
+        <MetricCard title="Active Fuel Cards" value={overview.activeFuelCards} icon={<CreditCard className="size-5" />} />
+        <MetricCard title="Frozen Fuel Cards" value={overview.frozenFuelCards} icon={<CreditCard className="size-5" />} />
+        <MetricCard title="Monthly Spend" value={currency(overview.monthlySpend)} icon={<DollarSign className="size-5" />} />
+        <MetricCard title="Outstanding Balance" value={currency(overview.outstandingBalance)} icon={<DollarSign className="size-5" />} />
       </div>
 
-      {/* Recent Applications */}
-      <div className="card overflow-hidden">
-        <div className="border-b border-border px-6 py-5 flex justify-between items-center bg-surface">
-          <h3 className="text-base font-semibold text-foreground">Recent Applications</h3>
-          <Link href="/crm/applications" className="text-sm font-medium text-primary hover:text-primary-dim flex items-center transition-colors">
-            View all
-            <ArrowRight className="ml-1 h-4 w-4" />
-          </Link>
-        </div>
-        <div className="divide-y divide-border">
-          {recentApplications.length === 0 ? (
-            <div className="p-6 text-center text-sm text-muted-foreground">
-              No recent applications found.
-            </div>
-          ) : (
-            recentApplications.map((app) => (
-              <div key={app.id} className="px-6 py-4 flex items-center justify-between hover:bg-surface-raised transition-colors">
-                <div>
-                  <p className="text-sm font-medium text-foreground">{app.company_legal_name}</p>
-                  <p className="text-sm text-muted-foreground">{app.first_name} {app.last_name} • {app.email}</p>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div className="space-y-6 xl:col-span-2">
+          <Card className="rounded-lg py-0">
+            <CardHeader className="border-b py-4">
+              <CardTitle>Recent Fuel Transactions</CardTitle>
+            </CardHeader>
+            <CardContent className="divide-y p-0">
+              {overview.recentTransactions.map((transaction) => (
+                <div key={transaction.id} className="flex items-center justify-between gap-4 px-5 py-4">
+                  <div>
+                    <p className="font-medium">{transaction.merchant}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {transaction.customer?.company} · {transaction.driver?.name ?? 'Unassigned'} · •••• {transaction.fuelCard?.last4}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">{currency(transaction.amount)}</p>
+                    <StatusBadge status={transaction.status === 'approved' ? 'success' : transaction.status === 'declined' ? 'danger' : 'pending'} label={transaction.status} />
+                  </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <span className="text-sm text-muted-foreground font-mono">
-                    {new Date(app.created_at).toLocaleDateString()}
-                  </span>
-                  {app.status === 'pending' && (
-                    <span className="inline-flex items-center rounded-full bg-primary-dim px-2.5 py-0.5 text-xs font-medium text-primary border border-primary">
-                      Pending
-                    </span>
-                  )}
-                  {app.status === 'approved' && (
-                    <span className="inline-flex items-center rounded-full bg-green-500/10 px-2.5 py-0.5 text-xs font-medium text-green-400 border border-green-500/20">
-                      Approved
-                    </span>
-                  )}
-                  {app.status === 'denied' && (
-                    <span className="inline-flex items-center rounded-full bg-red-500/10 px-2.5 py-0.5 text-xs font-medium text-red-400 border border-red-500/20">
-                      Denied
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-lg py-0">
+            <CardHeader className="border-b py-4">
+              <CardTitle>Cards Needing Attention</CardTitle>
+            </CardHeader>
+            <CardContent className="divide-y p-0">
+              {overview.cardsNeedingAttention.map((card) => (
+                <Link
+                  href={`/crm/fuel-cards/${card.id}`}
+                  key={card.id}
+                  className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/35"
+                >
+                  <div>
+                    <p className="font-mono font-medium">•••• {card.last4}</p>
+                    <p className="text-sm text-muted-foreground">{card.customer?.company} · {card.driver?.name ?? 'Unassigned'}</p>
+                  </div>
+                  <StatusBadge status={card.status === 'active' ? 'success' : card.status === 'frozen' ? 'danger' : 'pending'} label={card.status} />
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
         </div>
+
+        <Card className="rounded-lg">
+          <CardHeader>
+            <CardTitle>Recent Activity</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ActivityTimeline events={overview.recentActivity.map((log) => ({
+              id: log.id,
+              title: log.title,
+              description: log.description,
+              date: new Date(log.createdAt).toLocaleDateString(),
+              icon: <Activity className="size-4" />,
+            }))} />
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

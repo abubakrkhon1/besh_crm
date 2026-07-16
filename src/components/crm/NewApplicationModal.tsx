@@ -25,6 +25,8 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
   const [authSigner, setAuthSigner] = useState(false)
 
   useEffect(() => {
+    // This portal must wait for the browser document before rendering.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
     document.body.style.overflow = 'hidden'
     return () => {

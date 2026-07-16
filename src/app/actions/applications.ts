@@ -1,16 +1,15 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, requireAdmin } from '@/lib/supabase/server'
 import { Application, ApplicationStatus } from '@/types/database.types'
 import { revalidatePath } from 'next/cache'
 
 export async function getApplications(): Promise<Application[]> {
   const supabase = await createClient()
 
-  // Make user admin (temporary workaround because of RLS on applications)
-  const { data: { user } } = await supabase.auth.getUser()
-  if (user) {
-    await supabase.from('profiles').update({ role: 'admin' }).eq('id', user.id)
+  const { error: adminError } = await requireAdmin()
+  if (adminError) {
+    return []
   }
 
   const { data, error } = await supabase
@@ -26,8 +25,35 @@ export async function getApplications(): Promise<Application[]> {
   return data as Application[]
 }
 
+export async function getApplication(id: string): Promise<Application | null> {
+  const supabase = await createClient()
+
+  const { error: adminError } = await requireAdmin()
+  if (adminError) {
+    return null
+  }
+
+  const { data, error } = await supabase
+    .from('applications')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (error) {
+    console.error('Error fetching application:', error)
+    return null
+  }
+
+  return data as Application
+}
+
 export async function getDashboardStats() {
   const supabase = await createClient()
+
+  const { error: adminError } = await requireAdmin()
+  if (adminError) {
+    return { total: 0, pending: 0, approved: 0, denied: 0 }
+  }
 
   const { data, error } = await supabase
     .from('applications')
@@ -54,10 +80,9 @@ export async function getDashboardStats() {
 export async function updateApplicationStatus(id: string, status: ApplicationStatus, denialReason?: string) {
   const supabase = await createClient()
 
-  // Get current user to log who reviewed it
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return { error: 'Unauthorized' }
+  const { error: adminError, user } = await requireAdmin()
+  if (adminError || !user) {
+    return { error: adminError || 'Unauthorized' }
   }
 
   const updateData: any = {
