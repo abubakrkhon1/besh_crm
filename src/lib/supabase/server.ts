@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { Profile, SalesRole, UserRole } from '@/types/database.types'
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -52,14 +53,52 @@ export async function requireAdmin() {
   // console.log('2. Profile Error:', profileError)
   // console.log('3. Profile Row:', profile)
 
-  const isAdminResult = profile?.role === 'admin'
+  const isAdminResult = ['owner', 'admin', 'general_manager'].includes(profile?.role ?? '')
   // console.log('4. is_admin Result:', isAdminResult)
   // console.log('---------------------------')
 
   if (profileError || !isAdminResult) {
-    console.error(`requireAdmin: Role is not admin. Found role: ${profile?.role}`)
-    return { error: 'Forbidden: Access denied. Administrator privileges required.', user: null }
+    console.error(`requireAdmin: Role does not have full CRM access. Found role: ${profile?.role}`)
+    return { error: 'Forbidden: Full CRM access required.', user: null }
   }
 
   return { error: null, user }
 }
+
+export async function getCurrentProfile(): Promise<Profile | null> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) return null
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('auth_user_id', user.id)
+    .eq('is_active', true)
+    .single()
+
+  if (error) {
+    console.error('getCurrentProfile:', error)
+    return null
+  }
+
+  return data as Profile
+}
+
+export async function requireRoles(roles: readonly UserRole[]) {
+  const profile = await getCurrentProfile()
+
+  if (!profile) return { error: 'Unauthorized', profile: null }
+  if (!roles.includes(profile.role)) return { error: 'Forbidden', profile: null }
+
+  return { error: null, profile }
+}
+
+export const CRM_ROLES: readonly SalesRole[] = [
+  'owner',
+  'admin',
+  'general_manager',
+  'sales_manager',
+  'sales_representative',
+]

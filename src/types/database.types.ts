@@ -1,4 +1,17 @@
-export type UserRole = 'admin' | 'driver' | 'viewer';
+export type UserRole =
+  | 'owner'
+  | 'admin'
+  | 'driver'
+  | 'general_manager'
+  | 'sales_manager'
+  | 'sales_representative'
+  | 'accounting'
+  | 'compliance'
+  | 'support'
+  | 'marketing';
+
+export type StaffRole = Exclude<UserRole, 'driver'>;
+export type SalesRole = 'owner' | 'admin' | 'general_manager' | 'sales_manager' | 'sales_representative';
 
 export interface Database {
   public: {
@@ -11,6 +24,9 @@ export interface Database {
           email: string | null;
           role: UserRole;
           avatar_url: string | null;
+          manager_profile_id: string | null;
+          department: string | null;
+          is_active: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -21,6 +37,9 @@ export interface Database {
           email?: string | null;
           role?: UserRole;
           avatar_url?: string | null;
+          manager_profile_id?: string | null;
+          department?: string | null;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -31,6 +50,9 @@ export interface Database {
           email?: string | null;
           role?: UserRole;
           avatar_url?: string | null;
+          manager_profile_id?: string | null;
+          department?: string | null;
+          is_active?: boolean;
           updated_at?: string;
         };
       };
@@ -201,6 +223,51 @@ export interface Database {
           updated_at?: string;
         };
       };
+      leads: {
+        Row: {
+          id: string;
+          company_name: string | null;
+          contact_first_name: string;
+          contact_last_name: string;
+          email: string | null;
+          phone: string | null;
+          status: LeadStatus;
+          source: string;
+          notes: string | null;
+          created_by_profile_id: string;
+          assigned_to_profile_id: string | null;
+          sales_manager_profile_id: string | null;
+          application_id: string | null;
+          customer_id: string | null;
+          accepted_at: string | null;
+          rejected_at: string | null;
+          inserted_into_crm_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_name?: string | null;
+          contact_first_name: string;
+          contact_last_name: string;
+          email?: string | null;
+          phone?: string | null;
+          status?: LeadStatus;
+          source?: string;
+          notes?: string | null;
+          created_by_profile_id: string;
+          assigned_to_profile_id?: string | null;
+          sales_manager_profile_id?: string | null;
+          application_id?: string | null;
+          customer_id?: string | null;
+          accepted_at?: string | null;
+          rejected_at?: string | null;
+          inserted_into_crm_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<Database['public']['Tables']['leads']['Row'], 'id'>>;
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -218,3 +285,6 @@ export type ApplicationStatus = 'pending' | 'approved' | 'denied';
 export type Application = Database['public']['Tables']['applications']['Row'];
 export type ApplicationInsert = Database['public']['Tables']['applications']['Insert'];
 export type ApplicationUpdate = Database['public']['Tables']['applications']['Update'];
+export type LeadStatus = 'new' | 'accepted' | 'rejected' | 'inserted_into_crm';
+export type Lead = Database['public']['Tables']['leads']['Row'];
+export type LeadInsert = Database['public']['Tables']['leads']['Insert'];

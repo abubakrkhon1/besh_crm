@@ -18,17 +18,18 @@ export async function login(formData: FormData) {
     return { error: error?.message || 'Login failed' }
   }
 
-  // Verify the user is an admin
+  // Drivers use Besh Mobile. Only CRM roles may enter this application.
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('role')
     .eq('auth_user_id', data.user.id)
     .single()
 
-  if (profileError || profile?.role !== 'admin') {
+  const crmRoles = ['owner', 'admin', 'general_manager', 'sales_manager', 'sales_representative']
+  if (profileError || !profile || !crmRoles.includes(profile.role)) {
     await supabase.auth.signOut()
     console.error('Login denied. Profile error:', profileError, 'Role:', profile?.role)
-    return { error: 'Access denied. Administrator privileges required.' }
+    return { error: 'Access denied. This account does not have Fuel CRM access.' }
   }
 
   revalidatePath('/', 'layout')

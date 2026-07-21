@@ -1,101 +1,151 @@
 import Link from 'next/link'
-import { Activity, AlertTriangle, CreditCard, DollarSign, Users } from 'lucide-react'
+import { ArrowRight, Contact, CreditCard, Droplets, ListFilter, Plus, UserMinus, UserPlus, Users } from 'lucide-react'
+import { getGeneralManagerDashboard, getLeads, getSalesManagerDashboard, getSalesRepresentatives } from '@/app/actions/leads'
+import { LeadsTable } from '@/components/crm/LeadsTable'
+import { NewLeadDialog } from '@/components/crm/NewLeadDialog'
+import { buildRepresentativePerformance, SalesRepresentativesTable } from '@/components/crm/SalesRepresentativesTable'
 import { MetricCard } from '@/components/crm/ui/MetricCard'
-import { ActivityTimeline } from '@/components/crm/ui/ActivityTimeline'
-import { StatusBadge } from '@/components/crm/ui/StatusBadge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { buttonVariants } from '@/components/ui/button'
-import { currency, getDashboardOverview } from '@/lib/mock-data'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { getCurrentProfile } from '@/lib/supabase/server'
 
-export default function DashboardPage() {
-  const overview = getDashboardOverview()
+export default async function DashboardPage() {
+  const profile = await getCurrentProfile()
+
+  if (profile?.role === 'sales_manager') return <SalesManagerDashboard name={profile.full_name} />
+  if (profile?.role === 'sales_representative') return <SalesRepresentativeDashboard name={profile.full_name} />
+  return <GeneralManagerDashboard name={profile?.full_name} />
+}
+
+async function GeneralManagerDashboard({ name }: { name?: string | null }) {
+  const stats = await getGeneralManagerDashboard()
+  const leads = await getLeads()
 
   return (
-    <div className="animate-fade-in pb-12">
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Operations Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Live fleet credit, card, transaction, and risk activity across Fuel CRM.
-          </p>
-        </div>
-        <Link href="/crm/customers" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-          View customers
-        </Link>
+    <DashboardShell title={`Welcome${name ? `, ${name.split(' ')[0]}` : ''}`} description="A live overview of Fuel CRM performance and sales activity.">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <MetricCard title="Active cards" value={stats?.active_cards ?? 0} icon={<CreditCard />} />
+        <MetricCard title="Gallons sold" value={Number(stats?.gallons_sold ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} icon={<Droplets />} />
+        <MetricCard title="Customers joined" value={stats?.customers_joined ?? 0} icon={<UserPlus />} />
+        <MetricCard title="Customers left" value={stats?.customers_left ?? 0} icon={<UserMinus />} />
+        <MetricCard title="New leads" value={stats?.total_leads ?? 0} icon={<Contact />} />
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent leads</CardTitle>
+          <CardDescription>The latest sales opportunities across all representatives.</CardDescription>
+        </CardHeader>
+        <CardContent><LeadsTable leads={leads.slice(0, 5)} showRepresentative /></CardContent>
+      </Card>
+    </DashboardShell>
+  )
+}
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="Total Customers" value={overview.totalCustomers} icon={<Users className="size-5" />} />
-        <MetricCard title="Active Customers" value={overview.activeCustomers} icon={<Users className="size-5" />} />
-        <MetricCard title="Pending Customers" value={overview.pendingCustomers} icon={<Activity className="size-5" />} />
-        <MetricCard title="Suspended Customers" value={overview.suspendedCustomers} icon={<AlertTriangle className="size-5" />} />
-        <MetricCard title="Active Fuel Cards" value={overview.activeFuelCards} icon={<CreditCard className="size-5" />} />
-        <MetricCard title="Frozen Fuel Cards" value={overview.frozenFuelCards} icon={<CreditCard className="size-5" />} />
-        <MetricCard title="Monthly Spend" value={currency(overview.monthlySpend)} icon={<DollarSign className="size-5" />} />
-        <MetricCard title="Outstanding Balance" value={currency(overview.outstandingBalance)} icon={<DollarSign className="size-5" />} />
+async function SalesManagerDashboard({ name }: { name?: string | null }) {
+  const stats = await getSalesManagerDashboard()
+  const [leads, representatives] = await Promise.all([getLeads(), getSalesRepresentatives()])
+  const performance = buildRepresentativePerformance(representatives, leads)
+
+  return (
+    <DashboardShell title={`Sales team${name ? ` · ${name}` : ''}`} description="Monitor sales activity and lead conversion across the database.">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <MetricCard title="Representatives" value={stats?.total_representatives ?? 0} icon={<Users />} />
+        <MetricCard title="Total leads" value={stats?.total_leads ?? 0} icon={<Contact />} />
+        <MetricCard title="Accepted" value={stats?.accepted_leads ?? 0} icon={<Contact />} />
+        <MetricCard title="Inserted in CRM" value={stats?.inserted_leads ?? 0} icon={<Contact />} />
+        <MetricCard title="Conversion" value={`${stats?.conversion_rate ?? 0}%`} icon={<Contact />} />
       </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="space-y-6 xl:col-span-2">
-          <Card className="rounded-lg py-0">
-            <CardHeader className="border-b py-4">
-              <CardTitle>Recent Fuel Transactions</CardTitle>
-            </CardHeader>
-            <CardContent className="divide-y p-0">
-              {overview.recentTransactions.map((transaction) => (
-                <div key={transaction.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                  <div>
-                    <p className="font-medium">{transaction.merchant}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {transaction.customer?.company} · {transaction.driver?.name ?? 'Unassigned'} · •••• {transaction.fuelCard?.last4}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold">{currency(transaction.amount)}</p>
-                    <StatusBadge status={transaction.status === 'approved' ? 'success' : transaction.status === 'declined' ? 'danger' : 'pending'} label={transaction.status} />
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-lg py-0">
-            <CardHeader className="border-b py-4">
-              <CardTitle>Cards Needing Attention</CardTitle>
-            </CardHeader>
-            <CardContent className="divide-y p-0">
-              {overview.cardsNeedingAttention.map((card) => (
-                <Link
-                  href={`/crm/fuel-cards/${card.id}`}
-                  key={card.id}
-                  className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/35"
-                >
-                  <div>
-                    <p className="font-mono font-medium">•••• {card.last4}</p>
-                    <p className="text-sm text-muted-foreground">{card.customer?.company} · {card.driver?.name ?? 'Unassigned'}</p>
-                  </div>
-                  <StatusBadge status={card.status === 'active' ? 'success' : card.status === 'frozen' ? 'danger' : 'pending'} label={card.status} />
-                </Link>
-              ))}
-            </CardContent>
-          </Card>
+      <QuickActions leadLabel="New lead" leadsLabel="View all leads" />
+      <div>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Representative performance</h2>
+          <Link href="/crm/sales-representatives" className={buttonVariants({ variant: 'outline', size: 'sm' })}>View team</Link>
         </div>
+        <SalesRepresentativesTable performance={performance.slice(0, 5)} />
+      </div>
+      <div>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Latest leads</h2>
+          <Link href="/crm/leads" className={buttonVariants({ variant: 'outline', size: 'sm' })}>View all</Link>
+        </div>
+        <LeadsTable leads={leads.slice(0, 8)} showRepresentative />
+      </div>
+    </DashboardShell>
+  )
+}
 
-        <Card className="rounded-lg">
+async function SalesRepresentativeDashboard({ name }: { name?: string | null }) {
+  const leads = await getLeads()
+  const accepted = leads.filter((lead) => ['accepted', 'inserted_into_crm'].includes(lead.status)).length
+  const inserted = leads.filter((lead) => lead.status === 'inserted_into_crm').length
+
+  return (
+    <DashboardShell title={`My sales workspace${name ? ` · ${name}` : ''}`} description="Add prospects and track their progress into Fuel CRM.">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <MetricCard title="My leads" value={leads.length} icon={<Contact />} />
+        <MetricCard title="Accepted" value={accepted} icon={<Contact />} />
+        <MetricCard title="Inserted in CRM" value={inserted} icon={<Contact />} />
+      </div>
+      <QuickActions leadLabel="Add lead" leadsLabel="View my leads" />
+      <div>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Recent leads</h2>
+          <NewLeadDialog label="Add lead" />
+        </div>
+        <LeadsTable leads={leads.slice(0, 8)} showRepresentative={false} />
+      </div>
+    </DashboardShell>
+  )
+}
+
+function QuickActions({ leadLabel, leadsLabel }: { leadLabel: string; leadsLabel: string }) {
+  return (
+    <section className="flex flex-col gap-3" aria-labelledby="quick-actions-title">
+      <div>
+        <h2 id="quick-actions-title" className="text-lg font-semibold">Quick actions</h2>
+        <p className="text-sm text-muted-foreground">Jump straight into your most common sales tasks.</p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="bg-gradient-to-br from-card to-primary/5 transition-shadow hover:shadow-md">
           <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
+            <CardTitle>Create a new lead</CardTitle>
+            <CardDescription>Add a prospect and start tracking the opportunity.</CardDescription>
+            <CardAction className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Plus aria-hidden="true" />
+            </CardAction>
           </CardHeader>
           <CardContent>
-            <ActivityTimeline events={overview.recentActivity.map((log) => ({
-              id: log.id,
-              title: log.title,
-              description: log.description,
-              date: new Date(log.createdAt).toLocaleDateString(),
-              icon: <Activity className="size-4" />,
-            }))} />
+            <NewLeadDialog label={leadLabel} size="default" />
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-card to-muted/45 transition-shadow hover:shadow-md">
+          <CardHeader>
+            <CardTitle>Open lead pipeline</CardTitle>
+            <CardDescription>Review lead status, contacts, and recent activity.</CardDescription>
+            <CardAction className="flex size-10 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
+              <ListFilter aria-hidden="true" />
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            <Link href="/crm/leads" className={buttonVariants({ variant: 'outline' })}>
+              {leadsLabel}
+              <ArrowRight data-icon="inline-end" />
+            </Link>
           </CardContent>
         </Card>
       </div>
+    </section>
+  )
+}
+
+function DashboardShell({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return (
+    <div className="flex animate-fade-in flex-col gap-6 pb-12">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </div>
+      {children}
     </div>
   )
 }

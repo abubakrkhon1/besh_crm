@@ -13,7 +13,28 @@ export function FuelCardControls({ statuses }: { statuses: string[] }) {
   const [pending, startTransition] = useTransition()
   const set = (key: string, value: string) => { const next = new URLSearchParams(params); if (value) next.set(key, value); else next.delete(key); next.delete('page'); router.replace(`${pathname}?${next}`) }
   useEffect(() => { const timer = setTimeout(() => set('q', q.trim()), 350); return () => clearTimeout(timer) }, [q]) // eslint-disable-line react-hooks/exhaustive-deps
-  const sync = () => startTransition(async () => { const result = await syncWexCards({ confirm: true }); if (result.ok) toast.success(result.message); else toast.error(result.message); router.refresh() })
+  const sync = () => startTransition(async () => {
+    const toastId = toast.loading('Syncing all WEX data…', {
+      description: 'This notification will stay open until the sync finishes.',
+      duration: Infinity,
+      closeButton: false,
+    })
+
+    try {
+      const result = await syncWexCards({ confirm: true })
+      const options = { id: toastId, duration: 5000, closeButton: true }
+      if (result.ok) toast.success(result.message, options)
+      else toast.error(result.message, options)
+    } catch {
+      toast.error('WEX data could not be synchronized. Please try again.', {
+        id: toastId,
+        duration: 5000,
+        closeButton: true,
+      })
+    } finally {
+      router.refresh()
+    }
+  })
   return <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
     <label className="relative min-w-0 flex-1"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><input value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-full rounded-lg border bg-background pl-9 pr-3 text-sm" placeholder="Search card, driver, unit, customer or status" /></label>
     <select className="h-9 rounded-lg border bg-background px-3 text-sm" value={params.get('status') ?? ''} onChange={(e) => set('status', e.target.value)}><option value="">All statuses</option>{statuses.map((s) => <option key={s}>{s}</option>)}</select>

@@ -2,15 +2,32 @@
 
 import { Bell, Search, Sun, Moon } from 'lucide-react'
 import { useTheme } from 'next-themes'
+import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { buttonVariants } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Profile } from '@/types/database.types'
 
-export function Header() {
+export function Header({ profile }: { profile: Profile }) {
   const { theme, setTheme } = useTheme()
+  const pathname = usePathname()
   const [mounted, setMounted] = useState(false)
+  const initials = (profile.full_name ?? profile.email ?? 'FC')
+    .split(/\s|@/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('')
+  const title = pathname.startsWith('/crm/sales-representatives') ? 'Sales Representatives'
+    : pathname.startsWith('/crm/applications') ? 'Applications'
+      : pathname.startsWith('/crm/customers') ? 'Customers'
+        : pathname.startsWith('/crm/fuel-cards') ? 'Fuel Cards'
+          : pathname.startsWith('/crm/transactions') ? 'Transactions'
+            : pathname.startsWith('/crm/leads/new') ? 'Add Lead'
+              : pathname.startsWith('/crm/leads') ? 'Leads'
+                : 'Dashboard'
 
   // Avoid hydration mismatch
   useEffect(() => {
@@ -20,9 +37,11 @@ export function Header() {
   }, [])
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center border-b bg-background/85 px-4 backdrop-blur-xl md:px-6">
-      <div className="flex w-full items-center gap-4">
-        <div className="relative flex min-w-0 flex-1 items-center">
+    <header className="sticky top-0 z-20 flex h-[60px] shrink-0 items-center border-b bg-card px-4 md:px-6">
+      <div className="flex w-full items-center justify-between gap-4">
+        <h1 className="truncate text-[17px] font-bold text-foreground">{title}</h1>
+        <div className="flex items-center gap-3.5">
+        <div className="relative hidden w-60 items-center md:flex">
           <label htmlFor="search-field" className="sr-only">
             Search
           </label>
@@ -32,18 +51,13 @@ export function Header() {
           />
           <input
             id="search-field"
-            className="h-9 w-full rounded-lg border bg-card pl-9 pr-16 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-amber-500/40 focus:ring-3 focus:ring-amber-500/10 disabled:cursor-not-allowed disabled:opacity-80"
-            placeholder="Search applications, customers, cards..."
+            className="h-8 w-full rounded-md border bg-background pl-9 pr-3 text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-100"
+            placeholder="Search leads, accounts…"
             type="search"
             name="search"
             disabled
             title="Global search coming soon"
           />
-          <div className="pointer-events-none absolute right-2 hidden items-center sm:flex">
-            <kbd className="inline-flex h-5 items-center gap-1 rounded border bg-muted px-1.5 text-[11px] font-medium text-muted-foreground">
-              <span>⌘</span>K
-            </kbd>
-          </div>
         </div>
         <div className="flex items-center gap-1">
           <Tooltip>
@@ -79,12 +93,13 @@ export function Header() {
             </Tooltip>
           )}
 
-          <Separator orientation="vertical" className="mx-2 hidden h-5 sm:block" />
-          <Avatar>
-            <AvatarFallback className="bg-amber-500/10 text-xs font-semibold text-amber-700 dark:text-amber-300">
-              FC
+          <Separator orientation="vertical" className="mx-1 hidden h-5 sm:block" />
+          <Avatar className="size-8">
+            <AvatarFallback className="bg-primary text-xs font-bold text-primary-foreground">
+              {initials}
             </AvatarFallback>
           </Avatar>
+        </div>
         </div>
       </div>
     </header>

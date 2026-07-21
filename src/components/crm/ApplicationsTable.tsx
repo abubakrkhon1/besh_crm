@@ -164,7 +164,7 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
                 placeholder="Search applications..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-amber-500/40 focus:ring-3 focus:ring-amber-500/10"
+                className="h-9 w-full rounded-md border bg-card pl-9 pr-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/40 focus:ring-3 focus:ring-primary/10"
               />
             </div>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

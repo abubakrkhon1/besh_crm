@@ -19,17 +19,17 @@ export function MetricCard({ title, value, icon, trend, className, onClick }: Me
     <Card
       onClick={onClick}
       className={cn(
-        'group rounded-lg py-0 transition-colors duration-200',
+        'group min-w-[180px] rounded-lg py-0 transition-colors duration-200',
         onClick && 'cursor-pointer hover:bg-muted/30',
         className
       )}
     >
-      <CardContent className="p-5">
+      <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h3 className="text-xs font-medium uppercase tracking-normal text-muted-foreground">{title}</h3>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-semibold tracking-tight text-foreground">{value}</span>
+            <h3 className="text-[12px] font-semibold uppercase tracking-[0.025em] text-muted-foreground">{title}</h3>
+            <div className="mt-1.5 flex items-baseline gap-2">
+              <span className="text-[26px] font-bold tracking-tight text-foreground">{value}</span>
               {trend && (
                 <span
                   className={cn(
@@ -43,7 +43,7 @@ export function MetricCard({ title, value, icon, trend, className, onClick }: Me
             </div>
           </div>
           {icon && (
-            <div className="rounded-md border bg-background p-2 text-muted-foreground transition-colors group-hover:text-foreground">
+            <div className="flex size-[34px] items-center justify-center rounded-md bg-primary p-2 text-primary-foreground">
               {icon}
             </div>
           )}

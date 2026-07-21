@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 export type CustomerSection = "fuel-cards" | "drivers" | "transactions"
 
 const activeTabClassName =
-  "data-active:bg-primary data-active:text-amber-700 dark:data-active:text-amber-300 data-active:font-semibold data-active:shadow-sm"
+  "data-active:bg-primary-dim data-active:text-primary data-active:font-semibold data-active:shadow-sm"
 
 export function CustomerSectionTabs({ value }: { value: CustomerSection }) {
   const pathname = usePathname()

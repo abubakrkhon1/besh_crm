@@ -34,7 +34,7 @@ export default function LoginPage() {
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 relative animate-slide-up">
-        <div className="glass-panel border border-slate-800 py-8 px-4 shadow sm:rounded-xl sm:px-10">
+        <div className="glass-panel py-8 px-4 shadow sm:rounded-xl sm:px-10">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
               <div className="rounded-md bg-red-500/10 p-4 border border-red-500/20">

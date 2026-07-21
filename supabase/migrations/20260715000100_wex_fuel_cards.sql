@@ -64,6 +64,13 @@ alter table public.fuel_card_sync_runs enable row level security;
 
 -- Replace the old broad fuel-card policy. Provider fields are service-role controlled.
 drop policy if exists fuel_cards_admin_all on public.fuel_cards;
+drop policy if exists fuel_cards_admin_select on public.fuel_cards;
+drop policy if exists fuel_card_mappings_admin_select on public.fuel_card_customer_mappings;
+drop policy if exists fuel_card_mappings_admin_insert on public.fuel_card_customer_mappings;
+drop policy if exists fuel_card_mappings_admin_update on public.fuel_card_customer_mappings;
+drop policy if exists fuel_card_mappings_admin_delete on public.fuel_card_customer_mappings;
+drop policy if exists fuel_card_sync_runs_admin_select on public.fuel_card_sync_runs;
+
 create policy fuel_cards_admin_select on public.fuel_cards for select to authenticated using (public.is_admin(auth.uid()));
 create policy fuel_card_mappings_admin_select on public.fuel_card_customer_mappings for select to authenticated using (public.is_admin(auth.uid()));
 create policy fuel_card_mappings_admin_insert on public.fuel_card_customer_mappings for insert to authenticated with check (public.is_admin(auth.uid()) and is_confirmed and confirmed_by = auth.uid());
