@@ -11,9 +11,10 @@ import {
   SortingState,
 } from '@tanstack/react-table'
 import { Card } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination'
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination'
 import {
   Table,
   TableBody,
@@ -29,6 +30,7 @@ interface DataTableProps<TData, TValue> {
   onRowClick?: (row: TData) => void
   emptyTitle?: string
   emptyDescription?: string
+  embedded?: boolean
 }
 
 export function DataTable<TData, TValue>({
@@ -37,6 +39,7 @@ export function DataTable<TData, TValue>({
   onRowClick,
   emptyTitle = 'No results',
   emptyDescription = 'Try adjusting your search or filters.',
+  embedded = false,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
 
@@ -53,10 +56,12 @@ export function DataTable<TData, TValue>({
       sorting,
     },
   })
+  const pageCount = Math.max(1, table.getPageCount())
+  const currentPage = table.getState().pagination.pageIndex + 1
+  const visiblePages = [...new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount])]
+    .filter((value) => value >= 1 && value <= pageCount)
 
-  return (
-    <div className="w-full">
-      <Card className="overflow-hidden rounded-lg py-0">
+  const tableContent = (
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-muted/45">
             {table.getHeaderGroups().map((headerGroup) => (
@@ -99,8 +104,12 @@ export function DataTable<TData, TValue>({
             )}
           </TableBody>
         </Table>
-      </Card>
-      <div className="flex flex-col gap-3 px-1 py-4 lg:flex-row lg:items-center lg:justify-between">
+  )
+
+  return (
+    <div className="w-full">
+      {embedded ? <div className="border-t">{tableContent}</div> : <Card className="overflow-hidden rounded-lg py-0">{tableContent}</Card>}
+      <div className={cn('flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:justify-between', embedded ? 'px-4' : 'px-1')}>
         <div className="flex flex-wrap items-center gap-4">
           <p className="text-sm text-muted-foreground">{data.length} result{data.length === 1 ? '' : 's'}</p>
           <Field orientation="horizontal" className="w-auto">
@@ -113,9 +122,12 @@ export function DataTable<TData, TValue>({
         <Pagination className="mx-0 w-auto">
           <PaginationContent>
             {table.getCanPreviousPage() && <PaginationItem><PaginationPrevious href="#" onClick={(event) => { event.preventDefault(); table.previousPage() }} /></PaginationItem>}
-            {Array.from({ length: table.getPageCount() }, (_, index) => index).map((index) => <PaginationItem key={index}>
-              <PaginationLink href="#" isActive={table.getState().pagination.pageIndex === index} onClick={(event) => { event.preventDefault(); table.setPageIndex(index) }}>{index + 1}</PaginationLink>
-            </PaginationItem>)}
+            {visiblePages.map((pageNumber, index) => <React.Fragment key={pageNumber}>
+              {index > 0 && visiblePages[index - 1] < pageNumber - 1 && <PaginationItem><PaginationEllipsis /></PaginationItem>}
+              <PaginationItem>
+                <PaginationLink href="#" isActive={currentPage === pageNumber} onClick={(event) => { event.preventDefault(); table.setPageIndex(pageNumber - 1) }}>{pageNumber}</PaginationLink>
+              </PaginationItem>
+            </React.Fragment>)}
             {table.getCanNextPage() && <PaginationItem><PaginationNext href="#" onClick={(event) => { event.preventDefault(); table.nextPage() }} /></PaginationItem>}
           </PaginationContent>
         </Pagination>

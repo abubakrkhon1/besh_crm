@@ -14,12 +14,12 @@ export default async function CRMLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground transition-colors">
-      <div className="hidden lg:fixed lg:inset-y-0 lg:z-30 lg:flex lg:w-[216px] lg:flex-col">
+    <div className="crm-shell flex h-screen overflow-hidden bg-background text-foreground transition-colors">
+      <div className="hidden lg:fixed lg:inset-y-0 lg:z-30 lg:flex lg:w-[202px] lg:flex-col">
         <Sidebar profile={profile} />
       </div>
 
-      <div className="flex flex-1 flex-col h-full min-w-0 lg:pl-[216px]">
+      <div className="flex h-full min-w-0 flex-1 flex-col lg:pl-[202px]">
         <Header profile={profile} />
         
         <main className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden">

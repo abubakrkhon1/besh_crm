@@ -1,9 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, Building2, CreditCard, FileCheck, Truck, UserRound } from 'lucide-react'
-import { getApplication } from '@/app/actions/applications'
+import { ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3, FileCheck, FileInput, Mail, Phone, TrendingUp, Truck, UserRound } from 'lucide-react'
+import { getApplication, reviewApplicationAction } from '@/app/actions/applications'
 import { StatusBadge } from '@/components/crm/ui/StatusBadge'
-import { ActivityTimeline } from '@/components/crm/ui/ActivityTimeline'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -28,29 +27,42 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
   const application = await getApplication(id)
 
   if (!application) notFound()
+  const approveAction = reviewApplicationAction.bind(null, application.id, 'approved')
+  const rejectAction = reviewApplicationAction.bind(null, application.id, 'denied')
+  const applicantName = `${application.first_name} ${application.last_name}`
+  const reviewStage = application.status === 'pending' ? 1 : 5
+  const reviewLabel = application.status === 'pending' ? 'Application Received' : application.status === 'approved' ? 'Application Approved' : 'Application Denied'
 
   return (
-    <div className="animate-fade-in pb-12">
-      <div className="mb-6">
-        <Link href="/crm/applications" className={buttonVariants({ variant: 'ghost', size: 'sm', className: 'mb-4 -ml-2' })}>
-          <ArrowLeft className="size-4" />
+    <div className="animate-fade-in pb-10 font-[family-name:var(--font-inter)]">
+      <div className="mb-5">
+        <Link href="/crm/applications" className={buttonVariants({ variant: 'ghost', size: 'sm', className: 'mb-4 -ml-2 text-sm font-medium text-primary hover:text-primary' })}>
+          <ArrowLeft data-icon="inline-start" />
           Applications
         </Link>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight">{application.company_legal_name}</h1>
+              <h1 className="text-4xl font-bold tracking-[-0.03em]">{application.company_legal_name}</h1>
               <ApplicationStatus status={application.status} />
-              <Badge variant="outline">{application.industry}</Badge>
+              <Badge variant="outline" className="rounded-full px-4 py-1.5 text-sm font-medium">{formatLabel(application.industry)}</Badge>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {application.first_name} {application.last_name} · {application.email} · {application.business_phone}
-            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[15px] text-muted-foreground">
+              <span className="flex items-center gap-2"><UserRound className="size-4" />{applicantName}</span>
+              <span className="flex items-center gap-2"><Mail className="size-4" />{application.email}</span>
+              <span className="flex items-center gap-2"><Phone className="size-4" />{application.business_phone}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline">Request Documents</Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-[250px] items-center gap-4 rounded-xl border bg-card px-5 py-3 shadow-sm">
+              <div className="flex flex-1 items-center gap-2">
+                {[1, 2, 3, 4, 5].map((stage) => <span key={stage} className={stage <= reviewStage ? 'size-2.5 rounded-full bg-primary' : 'size-2.5 rounded-full bg-muted-foreground/35'} />)}
+              </div>
+              <div className="text-right"><p className="text-[13px] font-medium text-muted-foreground">Stage {reviewStage} of 5</p><p className="text-[11px] text-muted-foreground">{reviewLabel}</p></div>
+            </div>
+            <Button variant="outline" className="h-11 px-5 text-sm" disabled title="Document requests are coming soon"><FileInput data-icon="inline-start" />Request Documents</Button>
             <AlertDialog>
-              <AlertDialogTrigger render={<button type="button" className={buttonVariants({ variant: 'ghost', className: 'text-destructive hover:bg-destructive/10 hover:text-destructive' })} />}>Reject</AlertDialogTrigger>
+              <AlertDialogTrigger render={<button type="button" disabled={application.status !== 'pending'} className={buttonVariants({ variant: 'ghost', className: 'h-11 px-5 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive' })} />}>Reject</AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Reject application?</AlertDialogTitle>
@@ -58,14 +70,14 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
                     This marks the application as denied. You can still review it later from the application record.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Reject</AlertDialogAction>
-                </AlertDialogFooter>
+                <form action={rejectAction}>
+                  <label className="mb-4 block text-sm font-medium">Reason (optional)<textarea name="denialReason" className="mt-2 min-h-20 w-full rounded-md border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
+                  <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction type="submit" className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Reject</AlertDialogAction></AlertDialogFooter>
+                </form>
               </AlertDialogContent>
             </AlertDialog>
             <AlertDialog>
-              <AlertDialogTrigger render={<button type="button" className={buttonVariants()} />}>Approve</AlertDialogTrigger>
+              <AlertDialogTrigger render={<button type="button" disabled={application.status !== 'pending'} className={buttonVariants({ className: 'h-11 px-5 text-sm' })} />}><CheckCircle2 data-icon="inline-start" />Approve</AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Approve application?</AlertDialogTitle>
@@ -73,43 +85,40 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
                     This will move the fleet into the customer onboarding queue.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction>Approve</AlertDialogAction>
-                </AlertDialogFooter>
+                <form action={approveAction}><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction type="submit">Approve</AlertDialogAction></AlertDialogFooter></form>
               </AlertDialogContent>
             </AlertDialog>
           </div>
         </div>
       </div>
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric title="Projected Spend" value={money(application.projected_spend)} icon={<CreditCard className="size-5" />} />
+      <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric title="Projected Spend" value={money(application.projected_spend)} icon={<TrendingUp className="size-5" />} />
         <Metric title="Total Trucks" value={String(application.total_trucks)} icon={<Truck className="size-5" />} />
         <Metric title="Total Drivers" value={String(application.total_drivers)} icon={<UserRound className="size-5" />} />
-        <Metric title="Submitted" value={date(application.submitted_at ?? application.created_at)} icon={<FileCheck className="size-5" />} />
+        <Metric title="Submitted" value={date(application.submitted_at ?? application.created_at)} icon={<CalendarDays className="size-5" />} />
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList variant="line" className="mb-6 h-9 w-full justify-start gap-5 overflow-x-auto">
+      <Tabs defaultValue="overview" className="w-full gap-0">
+        <TabsList variant="line" className="mb-4 h-8 w-full justify-start gap-8 overflow-x-auto border-b p-0">
           {['overview', 'company', 'fleet', 'credit', 'applicant', 'review'].map((tab) => (
-            <TabsTrigger key={tab} value={tab} className="px-3 capitalize focus-visible:ring-0">
+            <TabsTrigger key={tab} value={tab} className="flex-none rounded-none px-5 py-0 text-sm capitalize data-active:bg-transparent data-active:text-primary after:bottom-0 after:bg-primary focus-visible:ring-0">
               {tab}
             </TabsTrigger>
           ))}
         </TabsList>
 
-        <TabsContent value="overview" className="mt-0 grid gap-6 xl:grid-cols-3">
-          <Card className="xl:col-span-2">
-            <CardHeader>
-              <CardTitle>Application Overview</CardTitle>
+        <TabsContent value="overview" className="mt-0 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,1fr)]">
+          <Card className="min-h-[380px]">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-3 text-base"><span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary"><FileCheck className="size-4" /></span>Application Overview</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-5 sm:grid-cols-2">
+            <CardContent className="grid gap-x-12 gap-y-0 sm:grid-cols-2">
               <Info label="Legal name" value={application.company_legal_name} />
               <Info label="Doing business as" value={application.doing_business_as} />
-              <Info label="Account type" value={application.account_type} />
-              <Info label="Payment method" value={application.payment_method} />
-              <Info label="Legal structure" value={application.legal_structure} />
+              <Info label="Account type" value={formatLabel(application.account_type)} />
+              <Info label="Payment method" value={formatLabel(application.payment_method)} />
+              <Info label="Legal structure" value={formatLabel(application.legal_structure)} />
               <Info label="Year established" value={String(application.year_established)} />
               <div className="sm:col-span-2">
                 <Info label="Business description" value={application.business_description} />
@@ -117,18 +126,14 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Timeline</CardTitle>
+          <Card className="min-h-[380px]">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-3 text-base"><span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary"><Clock3 className="size-4" /></span>Timeline</CardTitle>
             </CardHeader>
-            <CardContent>
-              <ActivityTimeline
-                events={[
-                  { id: 'created', title: 'Application created', date: date(application.created_at), icon: <Building2 className="size-4" /> },
-                  { id: 'submitted', title: 'Submitted for review', date: date(application.submitted_at ?? application.created_at), description: 'Application entered underwriting queue.' },
-                  ...(application.reviewed_at ? [{ id: 'reviewed', title: 'Review completed', date: date(application.reviewed_at), description: `Decision: ${application.status}` }] : []),
-                ]}
-              />
+            <CardContent className="pt-2">
+              <TimelineItem icon={<Building2 className="size-4" />} title="Application created" dateValue={date(application.created_at)} first />
+              <TimelineItem icon={<span className="size-2.5 rounded-full bg-primary" />} title="Submitted for review" dateValue={date(application.submitted_at ?? application.created_at)} description="Application entered underwriting queue." />
+              {application.reviewed_at && <TimelineItem icon={<CheckCircle2 className="size-4" />} title="Review completed" dateValue={date(application.reviewed_at)} description={`Decision: ${formatLabel(application.status)}`} />}
             </CardContent>
           </Card>
         </TabsContent>
@@ -220,13 +225,13 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
 
 function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
   return (
-    <Card className="py-0">
-      <CardContent className="flex items-start justify-between p-5">
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">{title}</p>
-          <p className="mt-2 text-2xl font-semibold">{value}</p>
+    <Card className="min-h-[108px] py-0">
+      <CardContent className="flex h-full items-center gap-4 p-5">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">{icon}</div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-muted-foreground">{title}</p>
+          <p className="mt-1 truncate text-2xl font-semibold tracking-tight">{value}</p>
         </div>
-        <div className="rounded-md border bg-background p-2 text-muted-foreground">{icon}</div>
       </CardContent>
     </Card>
   )
@@ -249,11 +254,25 @@ function Section({ title, columns }: { title: string; columns: Array<[string, st
 
 function Info({ label, value }: { label: string; value?: string | number | null }) {
   return (
-    <div className="min-w-0">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 break-words text-sm font-medium">{value || 'Not provided'}</p>
+    <div className="min-w-0 border-b py-4">
+      <p className="text-sm font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 break-words text-[15px] font-medium">{value || 'Not provided'}</p>
     </div>
   )
+}
+
+function TimelineItem({ icon, title, dateValue, description, first = false }: { icon: React.ReactNode; title: string; dateValue: string; description?: string; first?: boolean }) {
+  return <div className="relative flex min-h-[92px] gap-4 pb-4">
+    <div className="relative flex w-10 shrink-0 justify-center">
+      {!first && <span className="absolute -top-5 h-5 w-px bg-border" />}
+      <span className="flex size-10 items-center justify-center rounded-full border bg-primary/10 text-primary">{icon}</span>
+      <span className="absolute top-10 h-[52px] w-px bg-border" />
+    </div>
+    <div className="flex min-w-0 flex-1 items-start justify-between gap-4 pt-2.5">
+      <div><p className="font-medium">{title}</p>{description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}</div>
+      <p className="shrink-0 text-sm text-muted-foreground">{dateValue}</p>
+    </div>
+  </div>
 }
 
 function Check({ label, value }: { label: string; value: boolean }) {
@@ -270,6 +289,7 @@ function ApplicationStatus({ status }: { status: Application['status'] }) {
     <StatusBadge
       status={status === 'pending' ? 'pending' : status === 'approved' ? 'success' : 'danger'}
       label={status}
+      className="h-8 px-4 text-sm capitalize"
     />
   )
 }
@@ -308,4 +328,8 @@ function residentialAddress(application: Application) {
     application.residential_state_province,
     application.residential_postal_code,
   ].filter(Boolean).join(', ')
+}
+
+function formatLabel(value: string) {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase())
 }

@@ -100,5 +100,5 @@ export const CRM_ROLES: readonly SalesRole[] = [
   'admin',
   'general_manager',
   'sales_manager',
-  'sales_representative',
+  'sales_agent',
 ]

@@ -1,14 +1,16 @@
 'use server'
 
-import { createClient, requireAdmin } from '@/lib/supabase/server'
+import { createClient, requireRoles } from '@/lib/supabase/server'
 import { Application, ApplicationStatus } from '@/types/database.types'
 import { revalidatePath } from 'next/cache'
+
+const APPLICATION_ROLES = ['owner', 'admin', 'general_manager', 'sales_manager'] as const
 
 export async function getApplications(): Promise<Application[]> {
   const supabase = await createClient()
 
-  const { error: adminError } = await requireAdmin()
-  if (adminError) {
+  const { error: accessError } = await requireRoles(APPLICATION_ROLES)
+  if (accessError) {
     return []
   }
 
@@ -28,8 +30,8 @@ export async function getApplications(): Promise<Application[]> {
 export async function getApplication(id: string): Promise<Application | null> {
   const supabase = await createClient()
 
-  const { error: adminError } = await requireAdmin()
-  if (adminError) {
+  const { error: accessError } = await requireRoles(APPLICATION_ROLES)
+  if (accessError) {
     return null
   }
 
@@ -50,8 +52,8 @@ export async function getApplication(id: string): Promise<Application | null> {
 export async function getDashboardStats() {
   const supabase = await createClient()
 
-  const { error: adminError } = await requireAdmin()
-  if (adminError) {
+  const { error: accessError } = await requireRoles(APPLICATION_ROLES)
+  if (accessError) {
     return { total: 0, pending: 0, approved: 0, denied: 0 }
   }
 
@@ -80,9 +82,10 @@ export async function getDashboardStats() {
 export async function updateApplicationStatus(id: string, status: ApplicationStatus, denialReason?: string) {
   const supabase = await createClient()
 
-  const { error: adminError, user } = await requireAdmin()
-  if (adminError || !user) {
-    return { error: adminError || 'Unauthorized' }
+  const { error: accessError } = await requireRoles(APPLICATION_ROLES)
+  const { data: { user } } = await supabase.auth.getUser()
+  if (accessError || !user) {
+    return { error: accessError || 'Unauthorized' }
   }
 
   const updateData: any = {
@@ -108,8 +111,14 @@ export async function updateApplicationStatus(id: string, status: ApplicationSta
   }
 
   revalidatePath('/crm/applications')
+  revalidatePath(`/crm/applications/${id}`)
   revalidatePath('/crm/dashboard')
   return { success: true }
+}
+
+export async function reviewApplicationAction(id: string, status: ApplicationStatus, formData: FormData) {
+  const denialReason = status === 'denied' ? String(formData.get('denialReason') ?? '').trim() || undefined : undefined
+  await updateApplicationStatus(id, status, denialReason)
 }
 
 export async function createApplication(data: Partial<Application>) {

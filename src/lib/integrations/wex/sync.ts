@@ -2,12 +2,54 @@ import 'server-only'
 
 import { createHmac } from 'node:crypto'
 import { createAdminClient } from '../../supabase/admin'
-import { getAccountTransactionsV3, getCardSummariesV2, getCarrierInfo, getChildTransactionsNewV3, loginToWex } from './client'
+import { calculateAccountCreditKpis } from './account-kpis'
+import { accumulateCustomerSpend, roundCurrency, type CustomerSpendTotals } from './customer-kpis'
+import { getAccountTransactionsV3, getCardSummariesV2, getCarrierInfo, getChildTransactionsNewV3, getContracts, getCreditLimits, loginToWex } from './client'
 import type { WexSyncResult } from './types'
 
 const batches = <T,>(items: T[], size = 250) => Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, (i + 1) * size))
 const normalizedCardNumber = (value: string) => value.replace(/\D/g, '') || value.trim()
 const WEX_TRANSACTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+const KPI_PAGE_SIZE = 1_000
+
+async function refreshCustomerSpendKpis(
+  db: ReturnType<typeof createAdminClient>,
+  customerIds: string[],
+  synchronizedAt: string,
+) {
+  if (!customerIds.length) return
+
+  const monthStart = new Date(synchronizedAt)
+  monthStart.setUTCDate(1)
+  monthStart.setUTCHours(0, 0, 0, 0)
+  const totals: CustomerSpendTotals = new Map(customerIds.map((customerId) => [customerId, { monthlySpend: 0, lifetimeSpend: 0 }]))
+
+  for (let offset = 0; ; offset += KPI_PAGE_SIZE) {
+    const { data, error } = await db
+      .from('fuel_transactions')
+      .select('id,customer_id,amount,transaction_date')
+      .in('customer_id', customerIds)
+      .eq('status', 'posted')
+      .order('id', { ascending: true })
+      .range(offset, offset + KPI_PAGE_SIZE - 1)
+    if (error) throw new Error('Customer spend transactions could not be loaded for KPI refresh.')
+
+    accumulateCustomerSpend(totals, data ?? [], monthStart.toISOString())
+    if (!data || data.length < KPI_PAGE_SIZE) break
+  }
+
+  for (const [customerId, spend] of totals) {
+    const { error } = await db
+      .from('customers')
+      .update({
+        monthly_spend: roundCurrency(spend.monthlySpend),
+        lifetime_spend: roundCurrency(spend.lifetimeSpend),
+        last_synced_at: synchronizedAt,
+      })
+      .eq('id', customerId)
+    if (error) throw new Error('Customer spend KPIs could not be updated.')
+  }
+}
 
 export function transactionWindows(begin: Date, end: Date) {
   const windows: Array<{ begin: Date, end: Date }> = []
@@ -37,8 +79,9 @@ export async function syncWexFuelCards(runId: string): Promise<WexSyncResult> {
   const begin = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000)
   const windows = transactionWindows(begin, end)
   console.info('[WEX sync] Fetching cards and transactions.', { stage: 'wex_provider_fetch', runId, transactionWindowDays: 30, transactionRequests: windows.length })
-  const [cards, carrier] = await Promise.all([getCardSummariesV2(clientId), getCarrierInfo(clientId)])
-  await progress('cards_fetched', { cardsReceived: cards.length, carrierRecords: 1 })
+  const [cards, carrier, contracts] = await Promise.all([getCardSummariesV2(clientId), getCarrierInfo(clientId), getContracts(clientId)])
+  const creditLimits = await Promise.all(contracts.map((contract) => getCreditLimits(clientId, contract.contractId)))
+  await progress('account_data_fetched', { cardsReceived: cards.length, carrierRecords: 1, contractsReceived: contracts.length })
   const transactionMap = new Map<string, Awaited<ReturnType<typeof getChildTransactionsNewV3>>[number]>()
   for (let index = 0; index < windows.length; index++) {
     const window = windows[index]
@@ -138,6 +181,18 @@ export async function syncWexFuelCards(runId: string): Promise<WexSyncResult> {
       type: 'fuel_purchase', status: 'posted', merchant_name: transaction.merchantName,
       merchant_address: transaction.merchantAddress, merchant_state: transaction.merchantState,
       gallons: transaction.gallons, amount: transaction.amount, savings: transaction.discountAmount,
+      authorization_code: transaction.authorizationCode, invoice_number: transaction.invoiceNumber,
+      contract_id: transaction.contractId, billing_currency: transaction.billingCurrency,
+      funded_total: transaction.fundedTotal, settled_amount: transaction.settledAmount,
+      preferred_total: transaction.preferredTotal, fees_total: transaction.feesTotal,
+      pre_discount_tax: transaction.preDiscountTax, post_discount_tax: transaction.postDiscountTax,
+      tax_exempt_amount: transaction.taxExemptAmount, wex_location_id: transaction.locationId,
+      merchant_city: transaction.merchantCity, merchant_zip: transaction.merchantZip,
+      merchant_country: transaction.merchantCountry, merchant_latitude: transaction.merchantLatitude,
+      merchant_longitude: transaction.merchantLongitude, entry_mode: transaction.entryMode,
+      hand_entered: transaction.handEntered, original_transaction_id: transaction.originalTransactionId,
+      statement_id: transaction.statementId, prompt_values: transaction.promptValues,
+      line_items: transaction.lineItems, taxes: transaction.taxes,
       transaction_date: transaction.transactionDate, last_synced_at: now,
     }]
   })
@@ -146,6 +201,23 @@ export async function syncWexFuelCards(runId: string): Promise<WexSyncResult> {
     if (error) throw new Error('WEX transactions could not be saved.')
   }
   await progress('transactions_saved', { transactionsSaved: transactionRows.length })
+  const synchronizedCustomerIds = [...new Set([
+    ...[...carrierRecords.keys()].map((carrierId) => customerByCarrier.get(carrierId)),
+    ...transactionRows.map((transaction) => transaction.customer_id),
+  ].filter((customerId): customerId is string => Boolean(customerId)))]
+  await refreshCustomerSpendKpis(db, synchronizedCustomerIds, now)
+  await progress('customer_kpis_refreshed', { customersUpdated: synchronizedCustomerIds.length })
+  const primaryCustomerId = customerByCarrier.get(carrier.carrierId)
+  if (primaryCustomerId && creditLimits.length) {
+    const creditKpis = calculateAccountCreditKpis(creditLimits)
+    const { error } = await db.from('customers').update({
+      credit_limit: creditKpis.creditLimit,
+      current_balance: creditKpis.currentBalance,
+      last_synced_at: now,
+    }).eq('id', primaryCustomerId)
+    if (error) throw new Error('Customer account credit KPIs could not be updated.')
+  }
+  await progress('customer_credit_refreshed', { customersUpdated: primaryCustomerId && creditLimits.length ? 1 : 0, contractsProcessed: creditLimits.length })
   console.info('[WEX sync] Supabase writes completed.', {
     stage: 'database_write_complete', runId, customers: carrierRecords.size,
     cards: rows.length, transactions: transactionRows.length,

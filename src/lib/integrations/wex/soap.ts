@@ -2,8 +2,8 @@ import 'server-only'
 
 import { XMLParser } from 'fast-xml-parser'
 import { WexError } from './errors'
-import { normalizedWexCardSchema, normalizedWexTransactionSchema } from './schemas'
-import type { WexCard, WexCarrier, WexTransaction } from './types'
+import { normalizedWexCardSchema, normalizedWexContractSchema, normalizedWexCreditLimitsSchema, normalizedWexTransactionSchema } from './schemas'
+import type { WexCard, WexCarrier, WexContract, WexCreditLimits, WexTransaction } from './types'
 
 const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, trimValues: true })
 export const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]!))
@@ -41,6 +41,20 @@ const numberOf = (value: unknown, fallback = 0) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
+const nullableNumberOf = (value: unknown) => {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+const valuesOf = (value: unknown): any[] => value == null ? [] : Array.isArray(value) ? value : [value]
+
+function parseTransactionTax(row: any) {
+  return {
+    description: valueOf(row.taxDescription), amount: numberOf(row.amount),
+    taxClass: valueOf(row.taxClass), taxCode: valueOf(row.taxCode),
+    exempt: String(row.exemptFlag).toLowerCase() === 'true' || String(row.exemptFlag).toUpperCase() === 'Y',
+  }
+}
 
 export function parseLogin(xml: string) {
   const result = valueOf(bodyOf(xml)?.loginResponse?.result)
@@ -70,8 +84,17 @@ export function parseCardSummaries(xml: string): WexCard[] {
 function parseTransactionsResult(result: any): WexTransaction[] {
   const values = result?.value == null ? [] : Array.isArray(result.value) ? result.value : [result.value]
   return values.map((row: any) => {
-    const lineItems = row.lineItems == null ? [] : Array.isArray(row.lineItems) ? row.lineItems : [row.lineItems]
-    const gallons = lineItems.reduce((total: number, item: any) => total + Math.max(0, numberOf(item.quantity)), 0)
+    const lineItems = valuesOf(row.lineItems).map((item) => ({
+      amount: numberOf(item.amount), category: valueOf(item.category),
+      discountAmount: numberOf(item.discAmount), fuelType: valueOf(item.fuelType),
+      pricePerUnit: nullableNumberOf(item.ppu), productCode: valueOf(item.prodCD),
+      quantity: numberOf(item.quantity), retailPricePerUnit: nullableNumberOf(item.retailPPU),
+      retailAmount: nullableNumberOf(item.retailAmount), serviceType: valueOf(item.serviceType),
+      taxes: valuesOf(item.lineTaxes).map(parseTransactionTax),
+    }))
+    const gallons = lineItems.reduce((total: number, item) => total + Math.max(0, item.quantity), 0)
+    const feesTotal = ['carrierFee', 'nonAreaFee', 'issuerFee', 'suprFee']
+      .reduce((total, field) => total + numberOf(row[field]), 0)
     return normalizedWexTransactionSchema.parse({
       transactionId: valueOf(row.transactionId), carrierId: valueOf(row.carrierId),
       companyXRef: valueOf(row.companyXRef), cardNumber: valueOf(row.cardNumber),
@@ -80,6 +103,19 @@ function parseTransactionsResult(result: any): WexTransaction[] {
       merchantName: valueOf(row.locationName), merchantAddress: valueOf(row.locationAddress),
       merchantState: valueOf(row.locationState), gallons: gallons > 0 ? gallons : null,
       transactionType: valueOf(row.transactionType) ?? '0',
+      authorizationCode: valueOf(row.authCode), invoiceNumber: valueOf(row.invoice),
+      contractId: nullableNumberOf(row.contractId), billingCurrency: valueOf(row.billingCurrency),
+      fundedTotal: nullableNumberOf(row.fundedTotal), settledAmount: nullableNumberOf(row.settleAmount),
+      preferredTotal: nullableNumberOf(row.prefTotal), feesTotal,
+      preDiscountTax: nullableNumberOf(row.preDiscTax), postDiscountTax: nullableNumberOf(row.postDiscTax),
+      taxExemptAmount: nullableNumberOf(row.taxExemptAmount), locationId: valueOf(row.locationId),
+      merchantCity: valueOf(row.locationCity), merchantZip: valueOf(row.locationZip),
+      merchantCountry: valueOf(row.locationCountry), merchantLatitude: valueOf(row.locationLatitude),
+      merchantLongitude: valueOf(row.locationLongitude), entryMode: valueOf(row.entryMode),
+      handEntered: String(row.handEntered).toLowerCase() === 'true',
+      originalTransactionId: valueOf(row.originalTransId), statementId: valueOf(row.statementId),
+      promptValues: valuesOf(row.infos).map((info) => ({ type: valueOf(info.type) ?? '', value: valueOf(info.value) ?? '' })),
+      lineItems, taxes: valuesOf(row.transTaxes).map(parseTransactionTax),
     })
   })
 }
@@ -98,4 +134,26 @@ export function parseCarrierInfo(xml: string): WexCarrier {
   const name = valueOf(result?.name)
   if (!carrierId || !name) throw new WexError('WEX returned invalid carrier information.', 'validation')
   return { carrierId, name }
+}
+
+export function parseContracts(xml: string): WexContract[] {
+  const result = bodyOf(xml)?.getContractsResponse?.result
+  const values = result?.value == null ? [] : Array.isArray(result.value) ? result.value : [result.value]
+  return values.map((row: any) => normalizedWexContractSchema.parse({
+    contractId: numberOf(row.contractId), status: valueOf(row.status) ?? 'UNKNOWN',
+    description: valueOf(row.description), currency: valueOf(row.currency),
+    limitMethod: numberOf(row.limitMethod), masterContract: String(row.masterContract).toLowerCase() === 'true',
+  }))
+}
+
+export function parseCreditLimits(xml: string): WexCreditLimits {
+  const result = bodyOf(xml)?.getCreditLimitsResponse?.result
+  if (!result) throw new WexError('WEX returned no credit-limit information.', 'validation')
+  return normalizedWexCreditLimitsSchema.parse({
+    contractStatus: valueOf(result.contractStatus) ?? 'UNKNOWN',
+    transactionLimit: numberOf(result.transLimit), originalLimit: numberOf(result.origLimit),
+    creditAvailable: numberOf(result.creditAvailable), dailyLimit: numberOf(result.dailyLimit),
+    dailyAvailable: numberOf(result.dailyAvailable), totalAvailable: numberOf(result.totalAvailable),
+    maxMoneyCode: numberOf(result.maxMoneyCode), unitOfMeasure: valueOf(result.uom),
+  })
 }

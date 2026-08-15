@@ -18,6 +18,7 @@ export function validateWexEnvironment() {
 }
 
 const nullable = z.string().nullable()
+const nullableNumber = z.number().finite().nullable()
 export const normalizedWexCardSchema = z.object({
   cardNumber: z.string().min(4), policyNumber: nullable, companyXRef: nullable,
   unitNumber: nullable, driverId: nullable, driverName: nullable, override: nullable,
@@ -26,21 +27,60 @@ export const normalizedWexCardSchema = z.object({
   policySubfleet: nullable, cardSubfleet: nullable,
 })
 
+export const normalizedWexTransactionTaxSchema = z.object({
+  description: nullable, amount: z.number().finite(), taxClass: nullable,
+  taxCode: nullable, exempt: z.boolean(),
+})
+
+export const normalizedWexTransactionLineItemSchema = z.object({
+  amount: z.number().finite(), category: nullable, discountAmount: z.number().finite(),
+  fuelType: nullable, pricePerUnit: nullableNumber, productCode: nullable,
+  quantity: z.number().finite(), retailPricePerUnit: nullableNumber,
+  retailAmount: nullableNumber, serviceType: nullable,
+  taxes: z.array(normalizedWexTransactionTaxSchema),
+})
+
 export const normalizedWexTransactionSchema = z.object({
   transactionId: z.string().min(1), carrierId: z.string().min(1), companyXRef: nullable,
   cardNumber: z.string().min(4), transactionDate: z.string().datetime({ offset: true }),
   amount: z.number().finite(), discountAmount: z.number().finite(), merchantName: nullable,
   merchantAddress: nullable, merchantState: nullable, gallons: z.number().finite().nullable(),
-  transactionType: z.string().min(1),
+  transactionType: z.string().min(1), authorizationCode: nullable, invoiceNumber: nullable,
+  contractId: z.number().int().nullable(), billingCurrency: nullable, fundedTotal: nullableNumber,
+  settledAmount: nullableNumber, preferredTotal: nullableNumber, feesTotal: z.number().finite(),
+  preDiscountTax: nullableNumber, postDiscountTax: nullableNumber, taxExemptAmount: nullableNumber,
+  locationId: nullable, merchantCity: nullable, merchantZip: nullable, merchantCountry: nullable,
+  merchantLatitude: nullable, merchantLongitude: nullable, entryMode: nullable,
+  handEntered: z.boolean(), originalTransactionId: nullable, statementId: nullable,
+  promptValues: z.array(z.object({ type: z.string(), value: z.string() })),
+  lineItems: z.array(normalizedWexTransactionLineItemSchema),
+  taxes: z.array(normalizedWexTransactionTaxSchema),
+})
+
+export const normalizedWexContractSchema = z.object({
+  contractId: z.number().int(), status: z.string().min(1), description: nullable,
+  currency: nullable, limitMethod: z.number().int(), masterContract: z.boolean(),
+})
+
+export const normalizedWexCreditLimitsSchema = z.object({
+  contractStatus: z.string().min(1), transactionLimit: z.number().finite(),
+  originalLimit: z.number().finite(), creditAvailable: z.number().finite(),
+  dailyLimit: z.number().finite(), dailyAvailable: z.number().finite(),
+  totalAvailable: z.number().finite(), maxMoneyCode: z.number().finite(),
+  unitOfMeasure: nullable,
 })
 
 export const syncActionSchema = z.object({ confirm: z.literal(true) })
+export const syncRunSchema = z.object({ runId: z.string().uuid() })
 export const mappingActionSchema = z.object({
   fuelCardId: z.string().uuid(), customerId: z.string().uuid().nullable(),
 })
 export const fuelCardQuerySchema = z.object({
   q: z.string().trim().max(100).catch(''), status: z.string().trim().max(50).catch(''),
   match: z.enum(['all', 'matched', 'unmatched']).catch('all'),
+  policy: z.string().trim().max(100).catch(''), customer: z.string().uuid().or(z.literal('')).catch(''),
+  sync: z.enum(['all', 'current', 'stale']).catch('all'),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).catch(''), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).catch(''),
   sort: z.enum(['last_synced_at', 'driver_name', 'unit_number', 'status']).catch('status'),
   dir: z.enum(['asc', 'desc']).catch('asc'), page: z.coerce.number().int().min(1).catch(1),
   pageSize: z.coerce.number().refine((value) => [10, 25, 50, 100].includes(value)).catch(25),

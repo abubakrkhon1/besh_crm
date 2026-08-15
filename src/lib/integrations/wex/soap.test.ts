@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
-import { assertNoSoapFault, parseAccountTransactionsV3, parseCardSummaries, parseCarrierInfo, parseChildTransactionsV3, parseLogin } from './soap'
+import { assertNoSoapFault, parseAccountTransactionsV3, parseCardSummaries, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin } from './soap'
 
 const envelope = (body: string) => `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body>${body}</soapenv:Body></soapenv:Envelope>`
 const card = (last4: string, extra = '') => `<value><cardNumber>TESTCARD${last4}</cardNumber><driverName>Sanitized Driver</driverName><status>ACTIVE</status>${extra}</value>`
@@ -22,9 +22,17 @@ describe('WEX SOAP parsing', () => {
     expect(ui).not.toContain(result.cardNumber)
   })
   it('parses a V3 transaction and normalizes its line-item gallons', () => {
-    const xml = envelope('<getChildTransactionsNewV3Response><result><value><transactionId>9001</transactionId><carrierId>42</carrierId><companyXRef>Sanitized Fleet</companyXRef><cardNumber>TESTCARD1001</cardNumber><transactionDate>2026-07-15T12:00:00Z</transactionDate><netTotal>123.45</netTotal><discAmount>4.25</discAmount><transactionType>1</transactionType><locationName>Test Fuel Stop</locationName><locationState>TN</locationState><lineItems><quantity>12.5</quantity></lineItems><lineItems><quantity>5</quantity></lineItems></value></result></getChildTransactionsNewV3Response>')
+    const xml = envelope('<getChildTransactionsNewV3Response><result><value><transactionId>9001</transactionId><carrierId>42</carrierId><companyXRef>Sanitized Fleet</companyXRef><cardNumber>TESTCARD1001</cardNumber><transactionDate>2026-07-15T12:00:00Z</transactionDate><netTotal>123.45</netTotal><settleAmount>120.25</settleAmount><discAmount>4.25</discAmount><carrierFee>1.25</carrierFee><issuerFee>0.75</issuerFee><transactionType>1</transactionType><contractId>17</contractId><authCode>AUTH1</authCode><invoice>INV1</invoice><locationId>300</locationId><locationName>Test Fuel Stop</locationName><locationAddress>1 Test Way</locationAddress><locationCity>Nashville</locationCity><locationState>TN</locationState><locationZip>37011</locationZip><locationLatitude>36.1</locationLatitude><locationLongitude>-86.7</locationLongitude><infos><type>ODOMETER</type><value>12345</value></infos><lineItems><amount>80</amount><quantity>12.5</quantity><ppu>3.5</ppu><prodCD>DIESEL</prodCD><fuelType>1</fuelType></lineItems><lineItems><amount>40</amount><quantity>5</quantity><lineTaxes><taxDescription>Fuel tax</taxDescription><amount>2.1</amount><taxCode>FT</taxCode></lineTaxes></lineItems><transTaxes><taxDescription>Sales tax</taxDescription><amount>3.2</amount><taxCode>ST</taxCode></transTaxes></value></result></getChildTransactionsNewV3Response>')
     const [transaction] = parseChildTransactionsV3(xml)
-    expect(transaction).toMatchObject({ transactionId: '9001', carrierId: '42', amount: 123.45, gallons: 17.5 })
+    expect(transaction).toMatchObject({
+      transactionId: '9001', carrierId: '42', amount: 123.45, gallons: 17.5,
+      settledAmount: 120.25, feesTotal: 2, contractId: 17, authorizationCode: 'AUTH1',
+      merchantCity: 'Nashville', merchantZip: '37011', promptValues: [{ type: 'ODOMETER', value: '12345' }],
+    })
+    expect(transaction.lineItems).toHaveLength(2)
+    expect(transaction.lineItems[0]).toMatchObject({ productCode: 'DIESEL', pricePerUnit: 3.5 })
+    expect(transaction.lineItems[1].taxes[0]).toMatchObject({ description: 'Fuel tax', amount: 2.1 })
+    expect(transaction.taxes[0]).toMatchObject({ description: 'Sales tax', amount: 3.2 })
   })
   it('parses own-account V3 transactions', () => {
     const xml = envelope('<getMCTransExtLocV3Response><result><value><transactionId>9002</transactionId><carrierId>42</carrierId><cardNumber>TESTCARD1001</cardNumber><transactionDate>2026-07-15T12:00:00Z</transactionDate><netTotal>50</netTotal><transactionType>1</transactionType><locationName>Test Stop</locationName></value></result></getMCTransExtLocV3Response>')
@@ -33,5 +41,13 @@ describe('WEX SOAP parsing', () => {
   it('parses carrier customer information', () => {
     const xml = envelope('<getCarrierInfoResponse><result><name>Sanitized Fleet</name><carrierId>42</carrierId><locationGroups>false</locationGroups></result></getCarrierInfoResponse>')
     expect(parseCarrierInfo(xml)).toEqual({ carrierId: '42', name: 'Sanitized Fleet' })
+  })
+  it('parses account contracts', () => {
+    const xml = envelope('<getContractsResponse><result><value><contractId>17</contractId><description>Fleet Credit</description><currency>USD</currency><limitMethod>1</limitMethod><masterContract>true</masterContract><status>ACTIVE</status></value></result></getContractsResponse>')
+    expect(parseContracts(xml)).toEqual([{ contractId: 17, description: 'Fleet Credit', currency: 'USD', limitMethod: 1, masterContract: true, status: 'ACTIVE' }])
+  })
+  it('parses contract credit limits with CRM-friendly names', () => {
+    const xml = envelope('<getCreditLimitsResponse><result><contractStatus>ACTIVE</contractStatus><transLimit>2500</transLimit><origLimit>25000</origLimit><creditAvailable>16657.82</creditAvailable><dailyLimit>5000</dailyLimit><dailyAvailable>4200</dailyAvailable><totalAvailable>16657.82</totalAvailable><maxMoneyCode>500</maxMoneyCode><uom>USD</uom></result></getCreditLimitsResponse>')
+    expect(parseCreditLimits(xml)).toMatchObject({ originalLimit: 25000, creditAvailable: 16657.82, transactionLimit: 2500, unitOfMeasure: 'USD' })
   })
 })

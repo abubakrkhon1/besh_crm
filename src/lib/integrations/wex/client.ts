@@ -3,7 +3,7 @@ import 'server-only'
 import { ProxyAgent } from 'undici'
 import { WexError } from './errors'
 import { wexEnvSchema } from './schemas'
-import { assertNoSoapFault, envelope, escapeXml, parseAccountTransactionsV3, parseCardSummaries, parseCarrierInfo, parseChildTransactionsV3, parseLogin } from './soap'
+import { assertNoSoapFault, envelope, escapeXml, parseAccountTransactionsV3, parseCardSummaries, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin } from './soap'
 
 function config() {
   const parsed = wexEnvSchema.safeParse(process.env)
@@ -61,4 +61,12 @@ export async function getAccountTransactionsV3(clientId: string, begin: Date, en
 
 export async function getCarrierInfo(clientId: string) {
   return parseCarrierInfo(await post(envelope(`<ns:getCarrierInfo><clientId>${escapeXml(clientId)}</clientId></ns:getCarrierInfo>`)))
+}
+
+export async function getContracts(clientId: string) {
+  return parseContracts(await post(envelope(`<ns:getContracts><clientId>${escapeXml(clientId)}</clientId></ns:getContracts>`)))
+}
+
+export async function getCreditLimits(clientId: string, contractId: number) {
+  return parseCreditLimits(await post(envelope(`<ns:getCreditLimits><clientId>${escapeXml(clientId)}</clientId><contractId>${contractId}</contractId></ns:getCreditLimits>`)))
 }

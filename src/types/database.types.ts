@@ -4,14 +4,14 @@ export type UserRole =
   | 'driver'
   | 'general_manager'
   | 'sales_manager'
-  | 'sales_representative'
+  | 'sales_agent'
   | 'accounting'
   | 'compliance'
   | 'support'
   | 'marketing';
 
 export type StaffRole = Exclude<UserRole, 'driver'>;
-export type SalesRole = 'owner' | 'admin' | 'general_manager' | 'sales_manager' | 'sales_representative';
+export type SalesRole = 'owner' | 'admin' | 'general_manager' | 'sales_manager' | 'sales_agent';
 
 export interface Database {
   public: {
@@ -231,6 +231,10 @@ export interface Database {
           contact_last_name: string;
           email: string | null;
           phone: string | null;
+          fleet_size: number | null;
+          preferred_network: string | null;
+          estimated_monthly_gallons: number | null;
+          account_type: LeadAccountType;
           status: LeadStatus;
           source: string;
           notes: string | null;
@@ -239,9 +243,10 @@ export interface Database {
           sales_manager_profile_id: string | null;
           application_id: string | null;
           customer_id: string | null;
-          accepted_at: string | null;
-          rejected_at: string | null;
-          inserted_into_crm_at: string | null;
+          successful_at: string | null;
+          deal_lost_at: string | null;
+          on_the_process_at: string | null;
+          follow_up_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -252,6 +257,10 @@ export interface Database {
           contact_last_name: string;
           email?: string | null;
           phone?: string | null;
+          fleet_size?: number | null;
+          preferred_network?: string | null;
+          estimated_monthly_gallons?: number | null;
+          account_type?: LeadAccountType;
           status?: LeadStatus;
           source?: string;
           notes?: string | null;
@@ -260,9 +269,10 @@ export interface Database {
           sales_manager_profile_id?: string | null;
           application_id?: string | null;
           customer_id?: string | null;
-          accepted_at?: string | null;
-          rejected_at?: string | null;
-          inserted_into_crm_at?: string | null;
+          successful_at?: string | null;
+          deal_lost_at?: string | null;
+          on_the_process_at?: string | null;
+          follow_up_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -285,6 +295,7 @@ export type ApplicationStatus = 'pending' | 'approved' | 'denied';
 export type Application = Database['public']['Tables']['applications']['Row'];
 export type ApplicationInsert = Database['public']['Tables']['applications']['Insert'];
 export type ApplicationUpdate = Database['public']['Tables']['applications']['Update'];
-export type LeadStatus = 'new' | 'accepted' | 'rejected' | 'inserted_into_crm';
+export type LeadStatus = 'new' | 'successful' | 'deal_lost' | 'on_the_process' | 'follow_up';
+export type LeadAccountType = 'prepaid_account' | 'deposit' | 'credit_line';
 export type Lead = Database['public']['Tables']['leads']['Row'];
 export type LeadInsert = Database['public']['Tables']['leads']['Insert'];
