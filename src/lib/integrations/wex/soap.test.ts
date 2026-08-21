@@ -14,6 +14,18 @@ describe('WEX SOAP parsing', () => {
   })
   it('detects faults returned with HTTP 200 bodies', () => expect(() => parseLogin(envelope('<soapenv:Fault><faultcode>Server</faultcode><faultstring>Invalid login</faultstring></soapenv:Fault>'))).toThrow('Invalid login'))
   it('redacts long identifiers echoed by SOAP faults', () => expect(() => assertNoSoapFault(envelope('<soapenv:Fault><faultstring>Invalid client ABCDEFGHIJKLMNOP123456</faultstring></soapenv:Fault>'))).toThrow('Invalid client [redacted]'))
+  it('classifies WEX command execution faults as safe transient errors', () => {
+    try {
+      assertNoSoapFault(envelope('<soapenv:Fault><faultstring>ERROR running command 1234567890123456</faultstring></soapenv:Fault>'))
+      throw new Error('Expected a WEX fault')
+    } catch (error) {
+      expect(error).toMatchObject({
+        message: 'WEX reported a temporary processing error.',
+        kind: 'soap_fault',
+        retryable: true,
+      })
+    }
+  })
   it('rejects missing login results', () => expect(() => parseLogin(envelope('<loginResponse><result/></loginResponse>'))).toThrow('authentication failed'))
   it('rejects access-denied text instead of treating it as a clientId', () => expect(() => parseLogin(envelope('<loginResponse><result>Not Allowed 192.0.2.1</result></loginResponse>'))).toThrow('rejected the login source'))
   it('does not serialize a full number in normalized UI-shaped data', () => {

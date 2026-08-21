@@ -35,7 +35,15 @@ async function processJob(job: WexJob) {
 export async function processNextWexJob() {
   const db = createAdminClient()
   const { data, error } = await db.rpc('claim_next_wex_job', { p_visibility_seconds: 360 })
-  if (error) throw new Error(`WEX job could not be claimed (${error.code}).`)
+  if (error) {
+    console.error('[WEX worker] Database claim failed.', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    })
+    throw new Error(`WEX job could not be claimed (${error.code}: ${error.message}).`)
+  }
   const job = (Array.isArray(data) ? data[0] : data) as WexJob | null
   if (!job) return { status: 'idle' as const }
 

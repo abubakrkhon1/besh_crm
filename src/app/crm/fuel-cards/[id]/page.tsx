@@ -10,6 +10,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { LocalDateTime } from '@/components/ui/local-date-time'
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
@@ -53,7 +54,7 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
       { label: 'Unit number', value: card.unit_number },
       { label: 'Payroll use', value: card.payroll_use },
       { label: 'GPS ID', value: card.gps_id },
-      { label: 'Last synchronized', value: formatDateTime(card.last_synced_at) },
+      { label: 'Last synchronized', value: <LocalDateTime value={card.last_synced_at} /> },
     ],
     [
       { label: 'Driver', value: driverDisplayName },
@@ -111,7 +112,7 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
           <SummaryItem label="Driver" value={driverDisplayName} icon={<UserRound />} tone="blue" />
           <SummaryItem label="Unit number" value={card.unit_number ?? '—'} icon={<Truck />} tone="orange" />
           <SummaryItem label="Policy" value={card.policy_number ?? '—'} icon={<ShieldCheck />} tone="blue" />
-          <SummaryItem label="Last synced" value={formatShortDateTime(card.last_synced_at)} icon={<RefreshCw />} tone="green" />
+          <SummaryItem label="Last synced" value={<LocalDateTime value={card.last_synced_at} variant="compact" />} icon={<RefreshCw />} tone="green" />
         </div>
       </header>
 
@@ -152,7 +153,7 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
                 embedded
                 header={<TableHeader><TableRow><TableHead className="pl-5">Date / time</TableHead><TableHead>Merchant</TableHead><TableHead>Location</TableHead><TableHead>Gallons</TableHead><TableHead>Amount</TableHead><TableHead>Savings</TableHead><TableHead className="pr-5">Status</TableHead></TableRow></TableHeader>}
                 rows={(transactions ?? []).map((transaction) => <TableRow key={transaction.id}>
-                  <TableCell className="whitespace-nowrap pl-5 text-muted-foreground">{formatDateTime(transaction.transaction_date)}</TableCell>
+                  <TableCell className="whitespace-nowrap pl-5 text-muted-foreground"><LocalDateTime value={transaction.transaction_date} /></TableCell>
                   <TableCell className="max-w-48 truncate font-semibold">{transaction.merchant_name ?? 'Unknown merchant'}</TableCell>
                   <TableCell className="max-w-44 truncate">{[transaction.merchant_address, transaction.merchant_state].filter(Boolean).join(', ') || '—'}</TableCell>
                   <TableCell className="tabular-nums">{transaction.gallons == null ? '—' : Number(transaction.gallons).toLocaleString(undefined, { maximumFractionDigits: 3 })}</TableCell>
@@ -178,7 +179,7 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
                 {syncHealthy ? <CheckCircle2 className="size-4" aria-hidden="true" /> : <RefreshCw className="size-4" aria-hidden="true" />}
                 {syncHealthy ? 'All systems operational' : 'Synchronization needs attention'}
               </div>
-              <div><p className="text-xs text-muted-foreground">Last successful sync</p><p className="mt-1 text-sm font-semibold">{formatDateTime(syncDate)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Last successful sync</p><p className="mt-1 text-sm font-semibold"><LocalDateTime value={syncDate} /></p></div>
               {sync && <p className="text-xs text-muted-foreground">{sync.cards_received.toLocaleString()} cards received · {sync.cards_unmatched.toLocaleString()} unmatched</p>}
             </CardContent>
           </Card>
@@ -225,14 +226,14 @@ const summaryToneStyles: Record<SummaryTone, string> = {
   orange: 'bg-status-follow-up text-status-follow-up-foreground',
 }
 
-function SummaryItem({ label, value, icon, tone, href }: { label: string; value: string; icon: React.ReactNode; tone: SummaryTone; href?: string }) {
+function SummaryItem({ label, value, icon, tone, href }: { label: string; value: React.ReactNode; icon: React.ReactNode; tone: SummaryTone; href?: string }) {
   return <Card size="sm" className="h-full min-h-20 min-w-0 justify-center shadow-sm transition-shadow hover:shadow-md">
     <CardHeader className="grid-cols-[minmax(0,1fr)_auto] px-4">
       <CardTitle className="truncate text-xs font-medium text-muted-foreground">{label}</CardTitle>
       <CardAction className={cn('flex size-8 items-center justify-center rounded-lg [&_svg]:size-4', summaryToneStyles[tone])}>{icon}</CardAction>
     </CardHeader>
     <CardContent className="min-w-0 px-4">
-      {href ? <Link href={href} title={value} className="block truncate text-sm font-semibold text-primary hover:underline">{value}</Link> : <p title={value} className="truncate text-sm font-semibold">{value}</p>}
+      {href ? <Link href={href} title={typeof value === 'string' ? value : undefined} className="block truncate text-sm font-semibold text-primary hover:underline">{value}</Link> : <p title={typeof value === 'string' ? value : undefined} className="truncate text-sm font-semibold">{value}</p>}
     </CardContent>
   </Card>
 }
@@ -282,7 +283,5 @@ function productSummary(restriction: { fuel_only: boolean; allow_def: boolean; a
 function normalizeStatus(value: string) { return value.trim().toLowerCase().replaceAll(' ', '_') }
 function formatLabel(value: string) { return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }
 function formatCurrency(value: number | string | null | undefined) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value ?? 0)) }
-function formatDateTime(value: string) { return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
-function formatShortDateTime(value: string) { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) }
 function formatDate(value: string) { return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(value)) }
 function initials(value: string) { return value.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'FC' }

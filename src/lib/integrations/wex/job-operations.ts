@@ -152,7 +152,7 @@ async function saveTransactions(db: Db, transactions: WexTransaction[], synchron
   const customers = await ensureCustomers(db, carriers, synchronizedAt)
   const fingerprints = transactions.map((transaction) => fingerprintCard(transaction.cardNumber))
   const { data: savedCards, error } = await db.from('fuel_cards')
-    .select('id,card_fingerprint,customer_id')
+    .select('id,card_fingerprint,customer_id,driver_id')
     .eq('provider', 'wex_efs')
     .in('card_fingerprint', [...new Set(fingerprints)])
   if (error) throw new Error('Synchronized cards could not be loaded for transaction matching.')
@@ -169,6 +169,7 @@ async function saveTransactions(db: Db, transactions: WexTransaction[], synchron
       provider: 'wex_efs', provider_transaction_id: transaction.transactionId,
       provider_transaction_type: transaction.transactionType, wex_carrier_id: transaction.carrierId,
       company_xref: transaction.companyXRef, customer_id: customerId, fuel_card_id: card?.id ?? null,
+      driver_id: card?.driver_id ?? null,
       type: 'fuel_purchase', status: 'posted', merchant_name: transaction.merchantName,
       merchant_address: transaction.merchantAddress, merchant_state: transaction.merchantState,
       gallons: transaction.gallons, amount: transaction.amount, savings: transaction.discountAmount,
@@ -207,6 +208,8 @@ export async function syncWexAccountSnapshot() {
   const creditLimits = await Promise.all(contracts.map((contract) => getCreditLimits(clientId, contract.contractId)))
   const customers = await ensureCustomers(db, [{ carrierId: carrier.carrierId, companyXRef: carrier.name }], synchronizedAt)
   const cardResult = await saveCards(db, cards, { carrierId: carrier.carrierId, companyXRef: carrier.name }, customers, synchronizedAt)
+  const { error: driverReconcileError } = await db.rpc('reconcile_wex_driver_profiles', { p_synchronized_at: synchronizedAt })
+  if (driverReconcileError) throw new Error('WEX driver profiles could not be reconciled.')
   const primaryCustomerId = customers.byCarrier.get(carrier.carrierId)
   if (primaryCustomerId && creditLimits.length) {
     const credit = calculateAccountCreditKpis(creditLimits)

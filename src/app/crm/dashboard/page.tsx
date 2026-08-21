@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { LocalDateTime } from '@/components/ui/local-date-time'
 import { cn } from '@/lib/utils'
 import { getCurrentProfile } from '@/lib/supabase/server'
 import type { Profile } from '@/types/database.types'
@@ -166,7 +167,7 @@ function RecentLeadsCard({ leads }: { leads: Awaited<ReturnType<typeof getLeads>
               <TableCell className="max-w-40 truncate pl-5 font-semibold">{lead.company_name ?? '—'}</TableCell>
               <TableCell className="max-w-36 truncate text-muted-foreground">{lead.contact_first_name} {lead.contact_last_name}</TableCell>
               <TableCell><Badge variant="outline" className={leadStatusBadgeStyles[lead.status] ?? 'bg-muted text-muted-foreground'}>{formatLeadStatus(lead.status)}</Badge></TableCell>
-              <TableCell className="pr-5 text-right text-muted-foreground">{formatDate(lead.created_at)}</TableCell>
+              <TableCell className="pr-5 text-right text-muted-foreground"><LocalDateTime value={lead.created_at} variant="date" /></TableCell>
             </TableRow>
           ))}
           columnCount={4}
@@ -207,7 +208,7 @@ function RecentTransactionsCard({ transactions }: { transactions: RecentDashboar
           </TableHeader>}
           rows={transactions.map((transaction) => (
             <TableRow key={transaction.id}>
-              <TableCell className="pl-5 text-muted-foreground">{formatDate(transaction.transaction_date)}</TableCell>
+              <TableCell className="pl-5 text-muted-foreground"><LocalDateTime value={transaction.transaction_date} variant="date" /></TableCell>
               <TableCell className="max-w-44 truncate font-semibold" title={transaction.merchant_name ?? undefined}>{formatMerchantName(transaction.merchant_name ?? 'Unknown')}</TableCell>
               <TableCell className="font-mono text-muted-foreground">{transaction.fuel_card?.card_last4 ? `•••• ${transaction.fuel_card.card_last4}` : '—'}</TableCell>
               <TableCell className="tabular-nums">{formatGallons(transaction.gallons)}</TableCell>
@@ -283,10 +284,6 @@ function formatGallons(value: number | string | null | undefined) {
 
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
-}
-
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function formatMerchantName(value: string) {
@@ -489,7 +486,7 @@ function SalesManagerPerformanceCard({ performance }: { performance: SalesPeriod
               <TableCell className="text-right tabular-nums">{row.accepted}</TableCell>
               <TableCell className="text-right font-semibold tabular-nums text-status-success-foreground">{row.inserted}</TableCell>
               <TableCell className="text-right"><Badge variant="outline" className="border-status-success-foreground/15 bg-status-success text-status-success-foreground">{row.conversionRate}%</Badge></TableCell>
-              <TableCell className="whitespace-nowrap pr-5 text-right text-xs text-muted-foreground">{row.lastActivity ? formatDate(row.lastActivity) : 'No activity'}</TableCell>
+              <TableCell className="whitespace-nowrap pr-5 text-right text-xs text-muted-foreground">{row.lastActivity ? <LocalDateTime value={row.lastActivity} variant="date" /> : 'No activity'}</TableCell>
             </TableRow>
           ))}
           columnCount={6}
@@ -523,7 +520,7 @@ function SalesManagerAttentionQueue({ leads }: { leads: LeadWithRepresentative[]
               <TableCell className="max-w-32 truncate text-muted-foreground">{lead.contact_first_name} {lead.contact_last_name}</TableCell>
               <TableCell><LeadAttentionBadge lead={lead} /></TableCell>
               <TableCell className="max-w-28 truncate text-muted-foreground">{lead.representative?.full_name ?? 'Unassigned'}</TableCell>
-              <TableCell className="pr-5 text-right text-muted-foreground">{formatDate(lead.updated_at)}</TableCell>
+              <TableCell className="pr-5 text-right text-muted-foreground"><LocalDateTime value={lead.updated_at} variant="date" /></TableCell>
             </TableRow>
           ))}
           columnCount={5}
@@ -565,7 +562,7 @@ function SalesManagerRecentLeadsCard({ leads }: { leads: LeadWithRepresentative[
               <TableCell className="max-w-28 truncate text-muted-foreground">{formatLeadStatus(lead.source)}</TableCell>
               <TableCell><Badge variant="outline" className={leadStatusBadgeStyles[lead.status] ?? 'bg-muted text-muted-foreground'}>{formatLeadStatus(lead.status)}</Badge></TableCell>
               <TableCell className="max-w-28 truncate text-muted-foreground">{lead.representative?.full_name ?? lead.representative?.email ?? 'Unassigned'}</TableCell>
-              <TableCell className="whitespace-nowrap text-muted-foreground">{formatDate(lead.created_at)}</TableCell>
+              <TableCell className="whitespace-nowrap text-muted-foreground"><LocalDateTime value={lead.created_at} variant="date" /></TableCell>
               <TableCell className="max-w-32 truncate pr-5 text-muted-foreground">{formatLeadStatus(lead.account_type)}</TableCell>
             </TableRow>
           ))}

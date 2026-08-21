@@ -19,6 +19,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { LocalDateTime } from '@/components/ui/local-date-time'
 import { Application } from '@/types/database.types'
 import { RequestDocumentsDialog } from '@/components/crm/RequestDocumentsDialog'
 import { ApplicationDocumentsReview } from '@/components/crm/ApplicationDocumentsReview'
@@ -231,7 +232,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
   )
 }
 
-function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
+function Metric({ title, value, icon }: { title: string; value: React.ReactNode; icon: React.ReactNode }) {
   return (
     <Card className="min-h-[108px] py-0">
       <CardContent className="flex h-full items-center gap-4 p-5">
@@ -245,7 +246,7 @@ function Metric({ title, value, icon }: { title: string; value: string; icon: Re
   )
 }
 
-function Section({ title, columns }: { title: string; columns: Array<[string, string | number | null | undefined]> }) {
+function Section({ title, columns }: { title: string; columns: Array<[string, React.ReactNode]> }) {
   return (
     <Card>
       <CardHeader>
@@ -260,7 +261,7 @@ function Section({ title, columns }: { title: string; columns: Array<[string, st
   )
 }
 
-function Info({ label, value }: { label: string; value?: string | number | null }) {
+function Info({ label, value }: { label: string; value?: React.ReactNode }) {
   return (
     <div className="min-w-0 border-b py-4">
       <p className="text-sm font-medium text-muted-foreground">{label}</p>
@@ -269,7 +270,7 @@ function Info({ label, value }: { label: string; value?: string | number | null 
   )
 }
 
-function TimelineItem({ icon, title, dateValue, description, first = false }: { icon: React.ReactNode; title: string; dateValue: string; description?: string; first?: boolean }) {
+function TimelineItem({ icon, title, dateValue, description, first = false }: { icon: React.ReactNode; title: string; dateValue: React.ReactNode; description?: string; first?: boolean }) {
   return <div className="relative flex min-h-[92px] gap-4 pb-4">
     <div className="relative flex w-10 shrink-0 justify-center">
       {!first && <span className="absolute -top-5 h-5 w-px bg-border" />}
@@ -311,7 +312,7 @@ function money(value: number | string) {
 }
 
 function date(value: string) {
-  return format(new Date(value), 'MMM d, yyyy')
+  return <LocalDateTime value={value} variant="date" />
 }
 
 function mask(value?: string | null) {

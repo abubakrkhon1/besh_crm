@@ -223,6 +223,94 @@ export interface Database {
           updated_at?: string;
         };
       };
+      drivers: {
+        Row: {
+          id: string;
+          customer_id: string;
+          auth_user_id: string | null;
+          first_name: string;
+          last_name: string;
+          display_name: string | null;
+          email: string | null;
+          phone: string | null;
+          license_number: string | null;
+          license_state: string | null;
+          status: 'active' | 'inactive' | 'suspended';
+          provider: string;
+          external_driver_id: string | null;
+          provider_status: string | null;
+          onboarding_status: DriverOnboardingStatus;
+          invited_at: string | null;
+          claimed_at: string | null;
+          disabled_at: string | null;
+          last_synced_at: string | null;
+          last_seen_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          customer_id: string;
+          auth_user_id?: string | null;
+          first_name: string;
+          last_name: string;
+          display_name?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          license_number?: string | null;
+          license_state?: string | null;
+          status?: 'active' | 'inactive' | 'suspended';
+          provider?: string;
+          external_driver_id?: string | null;
+          provider_status?: string | null;
+          onboarding_status?: DriverOnboardingStatus;
+          invited_at?: string | null;
+          claimed_at?: string | null;
+          disabled_at?: string | null;
+          last_synced_at?: string | null;
+          last_seen_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['drivers']['Insert']>;
+      };
+      driver_invitations: {
+        Row: {
+          id: string;
+          driver_id: string;
+          recipient_email: string;
+          token_hash: string;
+          status: DriverInvitationStatus;
+          expires_at: string;
+          sent_at: string | null;
+          revoked_at: string | null;
+          claimed_at: string | null;
+          claimed_by_auth_user_id: string | null;
+          delivery_provider_id: string | null;
+          delivery_error: string | null;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          driver_id: string;
+          recipient_email: string;
+          token_hash: string;
+          status?: DriverInvitationStatus;
+          expires_at: string;
+          sent_at?: string | null;
+          revoked_at?: string | null;
+          claimed_at?: string | null;
+          claimed_by_auth_user_id?: string | null;
+          delivery_provider_id?: string | null;
+          delivery_error?: string | null;
+          created_by: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['driver_invitations']['Insert']>;
+      };
       leads: {
         Row: {
           id: string;
@@ -295,6 +383,11 @@ export type ApplicationStatus = 'pending' | 'under_review' | 'needs_documents' |
 export type Application = Database['public']['Tables']['applications']['Row'];
 export type ApplicationInsert = Database['public']['Tables']['applications']['Insert'];
 export type ApplicationUpdate = Database['public']['Tables']['applications']['Update'];
+
+export type DriverOnboardingStatus = 'unclaimed' | 'invited' | 'active' | 'disabled';
+export type DriverInvitationStatus = 'pending' | 'sent' | 'delivery_failed' | 'claimed' | 'revoked' | 'expired';
+export type Driver = Database['public']['Tables']['drivers']['Row'];
+export type DriverInvitation = Database['public']['Tables']['driver_invitations']['Row'];
 
 export type ApplicationDocumentRequestStatus = 'requested' | 'uploaded' | 'accepted' | 'rejected';
 export type ApplicationDocumentReviewStatus = 'uploaded' | 'accepted' | 'rejected';

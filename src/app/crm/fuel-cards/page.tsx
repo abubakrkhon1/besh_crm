@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { LocalDateTime } from '@/components/ui/local-date-time'
 import { fuelCardQuerySchema } from '@/lib/integrations/wex/schemas'
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
@@ -131,7 +132,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
               <div className="flex min-w-0 items-center gap-2 text-sm">
                 <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden="true" />
                 <span className="font-semibold">Last successful sync:</span>
-                <span className="truncate text-muted-foreground">{sync?.completed_at ? formatDateTime(sync.completed_at) : 'No successful sync yet'}</span>
+                <span className="truncate text-muted-foreground">{sync?.completed_at ? <LocalDateTime value={sync.completed_at} /> : 'No successful sync yet'}</span>
                 {sync && <span className="hidden text-muted-foreground md:inline">· {sync.cards_received.toLocaleString()} received · {sync.cards_unmatched.toLocaleString()} unmatched</span>}
               </div>
               <Badge variant="outline" className={syncHealthy ? 'border-status-success-foreground/15 bg-status-success text-status-success-foreground' : 'border-status-follow-up-foreground/15 bg-status-follow-up text-status-follow-up-foreground'}>
@@ -166,7 +167,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
                         <TableCell><CardStatusBadge status={card.status} /></TableCell>
                         <TableCell>{card.policy_number ?? '—'}</TableCell>
                         <TableCell>{card.is_overridden ? <Badge variant="outline" className="border-status-follow-up-foreground/15 bg-status-follow-up text-status-follow-up-foreground">Manual override</Badge> : 'No'}</TableCell>
-                        <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateTime(card.last_synced_at)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-muted-foreground"><LocalDateTime value={card.last_synced_at} /></TableCell>
                         <TableCell><Badge variant="outline" className={card.customer_id ? 'border-status-success-foreground/15 bg-status-success text-status-success-foreground' : 'border-destructive/15 bg-destructive/10 text-destructive'}>{card.customer_id ? 'Matched' : 'Unmatched'}</Badge></TableCell>
                         <TableCell className="text-right"><Link href={`/crm/fuel-cards/${card.id}`} aria-label={`View card ending ${card.card_last4}`} className={cn(buttonVariants({ variant: 'outline', size: 'icon-sm' }), 'relative z-10')}><Ellipsis /></Link></TableCell>
                       </TableRow>
@@ -200,7 +201,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
                     <TableCell>{customerId ? <Link href={`/crm/customers/${customerId}`} className="relative z-10 font-medium hover:underline">{String(customer?.company_name ?? customer?.contact_name ?? 'Customer')}</Link> : '—'}</TableCell>
                     <TableCell>{String(fuelCard?.driver_name ?? '—')}</TableCell>
                     <TableCell>{formatLabel(String(transaction.provider_transaction_type ?? 'fuel_purchase'))}</TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateTime(String(transaction.transaction_date))}</TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground"><LocalDateTime value={String(transaction.transaction_date)} /></TableCell>
                     <TableCell className="font-semibold tabular-nums">{formatCurrency(Number(transaction.amount))}</TableCell>
                     <TableCell className="max-w-48 truncate pr-5">{[transaction.merchant_name, transaction.merchant_state].filter(Boolean).join(' · ') || 'Unknown'}</TableCell>
                   </TableRow>
@@ -281,7 +282,7 @@ function CardStatusBadge({ status }: { status: string }) {
 }
 
 function SyncIssue({ icon, title, description, date }: { icon: React.ReactNode; title: string; description: string; date: string }) {
-  return <div className="flex gap-3"><div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive [&_svg]:size-4">{icon}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-sm font-semibold">{title}</p><span className="shrink-0 text-[10px] text-muted-foreground">{formatShortDateTime(date)}</span></div><p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p></div></div>
+  return <div className="flex gap-3"><div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive [&_svg]:size-4">{icon}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-sm font-semibold">{title}</p><LocalDateTime className="shrink-0 text-[10px] text-muted-foreground" value={date} variant="compact" /></div><p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p></div></div>
 }
 
 function buildStatusDistribution(cards: SummaryCard[]) {
@@ -339,5 +340,3 @@ function toDateValue(value: Date) {
 function normalizeStatus(value: string) { return value.trim().toLowerCase().replaceAll(' ', '_') }
 function formatLabel(value: string) { return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }
 function formatCurrency(value: number | string | null | undefined) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value ?? 0)) }
-function formatDateTime(value: string) { return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
-function formatShortDateTime(value: string) { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) }

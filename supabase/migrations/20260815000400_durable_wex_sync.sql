@@ -366,9 +366,16 @@ begin
   on conflict (provider) do update set lease_token = excluded.lease_token, job_id = excluded.job_id,
     expires_at = excluded.expires_at, heartbeat_at = excluded.heartbeat_at, updated_at = excluded.updated_at;
 
-  update public.fuel_card_sync_runs set status = 'running', metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
-    'stage', 'processing', 'jobId', v_job_id, 'jobType', job_type, 'attempt', attempt, 'updatedAt', clock_timestamp()
-  ) where id = run_id;
+  update public.fuel_card_sync_runs as sync_run set
+    status = 'running',
+    metadata = coalesce(sync_run.metadata, '{}'::jsonb) || jsonb_build_object(
+      'stage', 'processing',
+      'jobId', v_job_id,
+      'jobType', claim_next_wex_job.job_type,
+      'attempt', claim_next_wex_job.attempt,
+      'updatedAt', clock_timestamp()
+    )
+  where sync_run.id = claim_next_wex_job.run_id;
   return next;
 end
 $$;
@@ -474,30 +481,40 @@ language plpgsql
 security definer
 set search_path = public, pgmq
 as $$
-declare v_job public.wex_sync_jobs%rowtype; v_new_message bigint; v_status text;
+declare
+  v_job public.wex_sync_jobs%rowtype;
+  v_new_message bigint;
+  v_status text;
+  v_retryable boolean;
+  v_safe_message text;
 begin
   select * into v_job from public.wex_sync_jobs where id = p_job_id and lease_token = p_lease_token and status = 'running' for update;
   if v_job.id is null then return 'stale'; end if;
   perform pgmq.archive(v_job.queue_name, v_job.message_id);
-  if p_retryable and v_job.attempt < v_job.max_attempts then
+  v_retryable := p_retryable or (p_error_code = 'soap_fault' and p_error_message ilike 'ERROR running command %');
+  v_safe_message := case
+    when p_error_code = 'soap_fault' and p_error_message ilike 'ERROR running command %' then 'WEX reported a temporary processing error.'
+    else left(p_error_message, 1000)
+  end;
+  if v_retryable and v_job.attempt < v_job.max_attempts then
     select send into v_new_message from pgmq.send(v_job.queue_name, jsonb_build_object('job_id', v_job.id), greatest(0, p_retry_delay_seconds));
     v_status := 'retrying';
     update public.wex_sync_jobs set status = v_status, message_id = v_new_message, available_at = clock_timestamp() + make_interval(secs => greatest(0, p_retry_delay_seconds)),
-      lease_token = null, lease_expires_at = null, error_code = left(p_error_code, 100), error_message = left(p_error_message, 1000), updated_at = clock_timestamp()
+      lease_token = null, lease_expires_at = null, error_code = left(p_error_code, 100), error_message = v_safe_message, updated_at = clock_timestamp()
     where id = v_job.id;
-    update public.fuel_card_sync_runs set status = 'running', error_message = left(p_error_message, 1000), metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+    update public.fuel_card_sync_runs set status = 'running', error_message = v_safe_message, metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
       'stage', 'retrying', 'attempt', v_job.attempt, 'nextRetryAt', clock_timestamp() + make_interval(secs => greatest(0, p_retry_delay_seconds)), 'updatedAt', clock_timestamp()
     ) where id = v_job.run_id;
   else
     v_status := 'dead';
     update public.wex_sync_jobs set status = v_status, completed_at = clock_timestamp(), lease_token = null, lease_expires_at = null,
-      error_code = left(p_error_code, 100), error_message = left(p_error_message, 1000), updated_at = clock_timestamp()
+      error_code = left(p_error_code, 100), error_message = v_safe_message, updated_at = clock_timestamp()
     where id = v_job.id;
-    update public.fuel_card_sync_runs set status = 'failed', completed_at = clock_timestamp(), error_message = left(p_error_message, 1000),
+    update public.fuel_card_sync_runs set status = 'failed', completed_at = clock_timestamp(), error_message = v_safe_message,
       metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('stage', 'failed', 'jobId', v_job.id, 'attempt', v_job.attempt, 'updatedAt', clock_timestamp())
     where id = v_job.run_id;
     insert into public.wex_sync_alerts(provider, code, severity, title, message, run_id, job_id, details)
-    values ('wex_efs', 'dead_jobs', 'critical', 'WEX synchronization needs attention', left(p_error_message, 1000), v_job.run_id, v_job.id,
+    values ('wex_efs', 'dead_jobs', 'critical', 'WEX synchronization needs attention', v_safe_message, v_job.run_id, v_job.id,
       jsonb_build_object('jobType', v_job.job_type, 'attempts', v_job.attempt))
     on conflict (provider, code) where status = 'open' do update set
       severity = excluded.severity, title = excluded.title, message = excluded.message,

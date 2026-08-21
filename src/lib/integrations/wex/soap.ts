@@ -16,13 +16,15 @@ function bodyOf(xml: string) {
   const fault = body?.Fault
   if (fault) {
     const rawMessage = String(fault.faultstring ?? fault.Reason?.Text ?? 'WEX SOAP fault.')
+    const retryable = /^ERROR running command\b/i.test(rawMessage)
+      || /temporar|timed?\s*out|unavailable|internal\s+server/i.test(rawMessage)
     // Fault text is useful for diagnosing namespaces and business errors, but WEX
     // may echo identifiers. Redact long tokens before the error reaches logs.
-    const safeMessage = rawMessage
+    const safeMessage = (retryable ? 'WEX reported a temporary processing error.' : rawMessage)
       .replace(/https?:\/\/[^\s<]+/gi, '[redacted-url]')
       .replace(/\b[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
       .slice(0, 500)
-    throw new WexError(safeMessage, 'soap_fault')
+    throw new WexError(safeMessage, 'soap_fault', retryable)
   }
   return body
 }

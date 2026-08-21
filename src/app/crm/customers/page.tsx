@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { LocalDateTime } from '@/components/ui/local-date-time'
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
@@ -230,7 +231,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                         <TableCell className="tabular-nums">{customer.fuel_cards?.[0]?.count ?? 0}</TableCell>
                         <TableCell className="tabular-nums">{customer.fuel_transactions?.[0]?.count ?? 0}</TableCell>
                         <TableCell className="font-medium tabular-nums">{formatCurrency(customer.monthly_spend)}</TableCell>
-                        <TableCell className="whitespace-nowrap text-muted-foreground">{customer.last_synced_at ? formatDateTime(customer.last_synced_at) : 'Not synchronized'}</TableCell>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">{customer.last_synced_at ? <LocalDateTime value={customer.last_synced_at} /> : 'Not synchronized'}</TableCell>
                         <TableCell className="text-right">
                           <Link href={`/crm/customers/${customer.id}`} aria-label={`View ${customer.company_name ?? 'customer'}`} className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'relative z-10')}>
                             <Ellipsis />
@@ -294,7 +295,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
             <CardContent className="flex flex-col gap-3">
               <SyncLine
                 label="Last successful sync"
-                value={latestSync ? formatDateTime(latestSync) : 'No successful sync'}
+                value={latestSync ? <LocalDateTime value={latestSync} /> : 'No successful sync'}
                 tone="green"
               />
               <SyncLine label="Records synchronized" value={String(summary.length)} tone="blue" />
@@ -361,7 +362,7 @@ function CustomerStatusBadge({ status }: { status: string }) {
   )
 }
 
-function SyncLine({ label, value, tone }: { label: string; value: string; tone: MetricTone }) {
+function SyncLine({ label, value, tone }: { label: string; value: React.ReactNode; tone: MetricTone }) {
   const dotClass = {
     blue: 'bg-status-new-foreground',
     green: 'bg-status-success-foreground',
@@ -388,4 +389,3 @@ function buildStatusCounts(customers: CustomerRow[]) {
 function formatLabel(value: string) { return value.replaceAll('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase()) }
 function formatCurrency(value: number | null | undefined) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value ?? 0)) }
 function formatCompactCurrency(value: number | null | undefined) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(Number(value ?? 0)) }
-function formatDateTime(value: string) { return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }

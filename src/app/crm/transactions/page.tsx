@@ -20,6 +20,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { LocalDateTime } from '@/components/ui/local-date-time'
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
@@ -174,7 +175,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                     const driverName = fuelCard?.driver_name ?? (driver ? `${driver.first_name ?? ''} ${driver.last_name ?? ''}`.trim() : null)
                     return (
                       <TableRow key={transaction.id}>
-                        <TableCell className="pl-4 text-xs text-muted-foreground">{formatDateTime(transaction.transaction_date)}</TableCell>
+                        <TableCell className="pl-4 text-xs text-muted-foreground"><LocalDateTime value={transaction.transaction_date} /></TableCell>
                         <TableCell>{transaction.customer_id ? <Link href={`/crm/customers/${transaction.customer_id}`} className="font-medium hover:underline">{String(customer?.company_name ?? customer?.contact_name ?? 'Customer')}</Link> : <Badge variant="destructive">Unmatched</Badge>}</TableCell>
                         <TableCell>{transaction.fuel_card_id ? <Link href={`/crm/fuel-cards/${transaction.fuel_card_id}`} className="font-mono font-medium hover:underline">•••• {String(fuelCard?.card_last4 ?? '—')}</Link> : '—'}</TableCell>
                         <TableCell>{String(driverName ?? '—')}</TableCell>
@@ -240,7 +241,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                     <span className="shrink-0 font-semibold tabular-nums">{formatCurrency(exception.amount)}</span>
                   </div>
                   <p className="truncate pl-4 text-xs text-muted-foreground">{exception.detail}</p>
-                  <p className="pl-4 text-[11px] text-muted-foreground">{formatDateTime(exception.date)}</p>
+                  <LocalDateTime className="pl-4 text-[11px] text-muted-foreground" value={exception.date} />
                 </div>
               ))}
               {!summary.recentExceptions.length && <p className="py-6 text-center text-sm text-muted-foreground">No recent exceptions.</p>}
@@ -453,10 +454,6 @@ function formatNumber(value: number, digits = 0) {
 
 function formatPercent(value: number) {
   return new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 1 }).format(value)
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
 function formatLabel(value: string) {

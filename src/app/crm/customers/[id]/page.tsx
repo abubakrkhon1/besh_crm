@@ -10,8 +10,10 @@ import {
   type CustomerSection,
 } from "@/components/crm/CustomerSectionTabs"
 import { CustomerSpendTrend } from "@/components/crm/EntityOverviewCharts"
+import { DriverMobileInvitationDialog } from "@/components/crm/DriverMobileInvitationDialog"
 import { TablePagination } from "@/components/crm/ui/TablePagination"
 import { getTablePageSize } from "@/components/crm/ui/table-page-sizes"
+import { LocalDateTime } from "@/components/ui/local-date-time"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -79,7 +81,7 @@ export default async function CustomerPage({
   const lifetimeSpend = Number(customer.lifetime_spend ?? 0)
 
   const lastSync = customer.last_synced_at
-    ? new Intl.DateTimeFormat("en-US", { dateStyle: "short", timeStyle: "short" }).format(new Date(customer.last_synced_at))
+    ? <LocalDateTime value={customer.last_synced_at} variant="short" />
     : "Never"
 
   const contactName = customer.contact_name ?? "John D. Ababu"
@@ -205,7 +207,7 @@ export default async function CustomerPage({
                     {recentTransactions.map((transaction) => {
                       const linkedCard = Array.isArray(transaction.fuel_cards) ? transaction.fuel_cards[0] : transaction.fuel_cards
                       return <TableRow key={transaction.id}>
-                        <TableCell>{new Date(transaction.transaction_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</TableCell>
+                        <TableCell><LocalDateTime value={transaction.transaction_date} variant="date" /></TableCell>
                         <TableCell className="font-mono">•••• {linkedCard?.card_last4 ?? "—"}</TableCell>
                         <TableCell className="max-w-28 truncate">{linkedCard?.driver_name ?? "—"}</TableCell>
                         <TableCell>Fuel Purchase</TableCell>
@@ -394,10 +396,7 @@ async function FuelCardsTable({ customerId, query }: { customerId: string; query
                 <TableCell className="tabular-nums text-muted-foreground">{card.unit_number ?? "—"}</TableCell>
                 <TableCell className="tabular-nums text-muted-foreground">{card.policy_number ?? "—"}</TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">
-                  {new Intl.DateTimeFormat("en-US", {
-                    month: "numeric", day: "numeric", year: "numeric",
-                    hour: "numeric", minute: "2-digit", hour12: true,
-                  }).format(new Date(card.last_synced_at))}
+                  <LocalDateTime value={card.last_synced_at} variant="short" />
                 </TableCell>
                 <TableCell className="text-right">
                   <button
@@ -431,25 +430,18 @@ async function DriversTable({ customerId, query }: { customerId: string; query: 
   const db = await createClient()
   const page = Math.max(1, Number(query.driversPage) || 1)
   const pageSize = getTablePageSize(query.driversPageSize, 25)
-  const { data } = await db
-    .from("fuel_cards")
-    .select("id,card_last4,status,driver_name,external_driver_id,unit_number,last_synced_at")
+  const { data, count, error } = await db
+    .from("drivers")
+    .select("id,auth_user_id,first_name,last_name,display_name,email,status,onboarding_status,external_driver_id,last_synced_at,fuel_cards(id,status,unit_number,last_synced_at),driver_invitations(status,recipient_email,expires_at,created_at)", { count: "exact" })
     .eq("customer_id", customerId)
-    .or("external_driver_id.not.is.null,driver_name.not.is.null")
-    .order("driver_name", { ascending: true, nullsFirst: false })
+    .order("display_name", { ascending: true, nullsFirst: false })
+    .range((page - 1) * pageSize, page * pageSize - 1)
 
-  const driverMap = new Map<string, { name: string | null; externalId: string | null; cards: CardRecord[] }>()
-  for (const card of (data ?? []) as CardRecord[]) {
-    const key = card.external_driver_id || card.driver_name?.trim().toLocaleLowerCase() || card.id
-    const driver = driverMap.get(key) ?? { name: card.driver_name, externalId: card.external_driver_id, cards: [] }
-    driver.cards.push(card)
-    driverMap.set(key, driver)
+  if (error) {
+    return <div className="p-10 text-center text-sm text-destructive">Driver profiles could not be loaded.</div>
   }
-  const drivers = Array.from(driverMap.values())
-  const visibleDrivers = drivers.slice((page - 1) * pageSize, page * pageSize)
-
-  if (!drivers.length) {
-    return <div className="p-10 text-center text-sm text-muted-foreground">No driver information is stored on this customer&apos;s fuel cards.</div>
+  if (!data?.length) {
+    return <div className="p-10 text-center text-sm text-muted-foreground">No synchronized driver profiles exist for this customer.</div>
   }
 
   return (
@@ -460,24 +452,45 @@ async function DriversTable({ customerId, query }: { customerId: string; query: 
             <TableRow>
               <TableHead>Driver</TableHead>
               <TableHead>Driver ID</TableHead>
+              <TableHead>Mobile Access</TableHead>
               <TableHead>Cards</TableHead>
               <TableHead>Active Cards</TableHead>
               <TableHead>Units</TableHead>
               <TableHead>Last Synced</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visibleDrivers.map((driver) => {
-              const latestSync = driver.cards.reduce((latest, card) => card.last_synced_at > latest ? card.last_synced_at : latest, "")
-              const units = Array.from(new Set(driver.cards.map((card) => card.unit_number).filter(Boolean)))
+            {data.map((driver: any) => {
+              const cards = Array.isArray(driver.fuel_cards) ? driver.fuel_cards : []
+              const invitations = (Array.isArray(driver.driver_invitations) ? driver.driver_invitations : [])
+                .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
+              const latestInvitation = invitations[0]
+              const units = Array.from(new Set(cards.map((card: any) => card.unit_number).filter(Boolean)))
+              const name = driver.display_name || `${driver.first_name} ${driver.last_name}`.trim() || "Unnamed driver"
               return (
-                <TableRow key={driver.externalId ?? driver.name}>
-                  <TableCell className="font-medium">{driver.name ?? "Unnamed driver"}</TableCell>
-                  <TableCell className="tabular-nums text-muted-foreground">{driver.externalId ?? "—"}</TableCell>
-                  <TableCell className="tabular-nums">{driver.cards.length}</TableCell>
-                  <TableCell className="tabular-nums">{driver.cards.filter((card) => card.status?.toUpperCase() === "ACTIVE").length}</TableCell>
+                <TableRow key={driver.id}>
+                  <TableCell><p className="font-medium">{name}</p><p className="text-xs text-muted-foreground">{driver.email ?? "No verified email"}</p></TableCell>
+                  <TableCell className="tabular-nums text-muted-foreground">{driver.external_driver_id ?? "—"}</TableCell>
+                  <TableCell><DriverOnboardingBadge status={driver.onboarding_status} /></TableCell>
+                  <TableCell className="tabular-nums">{cards.length}</TableCell>
+                  <TableCell className="tabular-nums">{cards.filter((card: any) => card.status?.toLowerCase() === "active").length}</TableCell>
                   <TableCell className="text-muted-foreground">{units.join(", ") || "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{latestSync ? new Date(latestSync).toLocaleString() : "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{driver.last_synced_at ? <LocalDateTime value={driver.last_synced_at} /> : "—"}</TableCell>
+                  <TableCell className="text-right">
+                    <DriverMobileInvitationDialog
+                      driverId={driver.id}
+                      driverName={name}
+                      email={driver.email}
+                      authUserLinked={Boolean(driver.auth_user_id)}
+                      onboardingStatus={driver.onboarding_status}
+                      latestInvitation={latestInvitation ? {
+                        status: latestInvitation.status,
+                        recipientEmail: latestInvitation.recipient_email,
+                        expiresAt: latestInvitation.expires_at,
+                      } : null}
+                    />
+                  </TableCell>
                 </TableRow>
               )
             })}
@@ -488,7 +501,7 @@ async function DriversTable({ customerId, query }: { customerId: string; query: 
         <TablePagination
           page={page}
           pageSize={pageSize}
-          total={drivers.length}
+          total={count ?? 0}
           itemLabel="drivers"
           pageParam="driversPage"
           pageSizeParam="driversPageSize"
@@ -532,7 +545,7 @@ async function TransactionsTable({ customerId, query }: { customerId: string; qu
             {transactions.map((transaction: any) => (
               <TableRow key={transaction.id}>
                 <TableCell className="whitespace-nowrap text-muted-foreground">
-                  {new Date(transaction.transaction_date).toLocaleString()}
+                  <LocalDateTime value={transaction.transaction_date} />
                 </TableCell>
                 <TableCell>
                   {transaction.fuel_cards ? (
@@ -642,6 +655,19 @@ function FuelCardStatusBadge({ status }: { status: string }) {
   )
 }
 
+function DriverOnboardingBadge({ status }: { status: string }) {
+  return (
+    <Badge variant="outline" className={cn(
+      status === "active" && "border-status-success-foreground/15 bg-status-success text-status-success-foreground",
+      status === "invited" && "border-status-process-foreground/15 bg-status-process text-status-process-foreground",
+      status === "disabled" && "border-destructive/15 bg-destructive/10 text-destructive",
+      status === "unclaimed" && "bg-muted text-muted-foreground",
+    )}>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </Badge>
+  )
+}
+
 function HealthItem({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -651,7 +677,7 @@ function HealthItem({ icon, label }: { icon: React.ReactNode; label: string }) {
   )
 }
 
-function SyncDetailRow({ label, value }: { label: string; value: string }) {
+function SyncDetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 text-xs">
       <span className="text-muted-foreground">{label}</span>

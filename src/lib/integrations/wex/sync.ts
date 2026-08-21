@@ -167,7 +167,10 @@ export async function syncWexFuelCards(runId: string): Promise<WexSyncResult> {
     if (error) throw new Error('Fuel card synchronization could not be saved.')
   }
   await progress('cards_saved', { cardsSaved: rows.length, cardsUnmatched: rows.filter((row) => !row.customer_id).length })
-  const { data: savedCards, error: savedCardsError } = await db.from('fuel_cards').select('id,card_fingerprint,customer_id').eq('provider', 'wex_efs').in('card_fingerprint', [...new Set([...fingerprints, ...transactionFingerprints])])
+  const { error: driverReconcileError } = await db.rpc('reconcile_wex_driver_profiles', { p_synchronized_at: now })
+  if (driverReconcileError) throw new Error('WEX driver profiles could not be reconciled.')
+  await progress('drivers_reconciled')
+  const { data: savedCards, error: savedCardsError } = await db.from('fuel_cards').select('id,card_fingerprint,customer_id,driver_id').eq('provider', 'wex_efs').in('card_fingerprint', [...new Set([...fingerprints, ...transactionFingerprints])])
   if (savedCardsError) throw new Error('Synchronized cards could not be loaded for transaction matching.')
   const cardByFingerprint = new Map((savedCards ?? []).map((card: any) => [card.card_fingerprint, card]))
   const transactionRows = transactions.flatMap((transaction, index) => {
@@ -178,6 +181,7 @@ export async function syncWexFuelCards(runId: string): Promise<WexSyncResult> {
       provider: 'wex_efs', provider_transaction_id: transaction.transactionId,
       provider_transaction_type: transaction.transactionType, wex_carrier_id: transaction.carrierId,
       company_xref: transaction.companyXRef, customer_id: customerId, fuel_card_id: card?.id ?? null,
+      driver_id: card?.driver_id ?? null,
       type: 'fuel_purchase', status: 'posted', merchant_name: transaction.merchantName,
       merchant_address: transaction.merchantAddress, merchant_state: transaction.merchantState,
       gallons: transaction.gallons, amount: transaction.amount, savings: transaction.discountAmount,
