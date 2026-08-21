@@ -24,7 +24,6 @@ export async function GET(
     .from('fuel_card_sync_runs')
     .select('status,metadata,error_message,cards_received,cards_unmatched')
     .eq('id', parsed.data.runId)
-    .eq('created_by', auth.user.id)
     .single()
 
   if (error || !data) return NextResponse.json({ ok: false, message: 'Synchronization progress is unavailable.' }, { status: 404 })

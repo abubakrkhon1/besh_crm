@@ -59,8 +59,8 @@ export interface Database {
       applications: {
         Row: {
           id: string;
-          auth_user_id: string;
-          status: 'pending' | 'approved' | 'denied';
+          auth_user_id: string | null;
+          status: ApplicationStatus;
           company_legal_name: string;
           doing_business_as: string | null;
           business_phone: string;
@@ -114,8 +114,8 @@ export interface Database {
         };
         Insert: {
           id?: string;
-          auth_user_id: string;
-          status?: 'pending' | 'approved' | 'denied';
+          auth_user_id?: string | null;
+          status?: ApplicationStatus;
           company_legal_name: string;
           doing_business_as?: string | null;
           business_phone: string;
@@ -169,8 +169,8 @@ export interface Database {
         };
         Update: {
           id?: string;
-          auth_user_id?: string;
-          status?: 'pending' | 'approved' | 'denied';
+          auth_user_id?: string | null;
+          status?: ApplicationStatus;
           company_legal_name?: string;
           doing_business_as?: string | null;
           business_phone?: string;
@@ -291,10 +291,47 @@ export type Profile = Database['public']['Tables']['profiles']['Row'];
 export type ProfileInsert = Database['public']['Tables']['profiles']['Insert'];
 export type ProfileUpdate = Database['public']['Tables']['profiles']['Update'];
 
-export type ApplicationStatus = 'pending' | 'approved' | 'denied';
+export type ApplicationStatus = 'pending' | 'under_review' | 'needs_documents' | 'approved' | 'denied';
 export type Application = Database['public']['Tables']['applications']['Row'];
 export type ApplicationInsert = Database['public']['Tables']['applications']['Insert'];
 export type ApplicationUpdate = Database['public']['Tables']['applications']['Update'];
+
+export type ApplicationDocumentRequestStatus = 'requested' | 'uploaded' | 'accepted' | 'rejected';
+export type ApplicationDocumentReviewStatus = 'uploaded' | 'accepted' | 'rejected';
+
+export interface ApplicationDocumentRequest {
+  id: string;
+  application_id: string;
+  document_type: string;
+  label: string;
+  instructions: string | null;
+  is_required: boolean;
+  due_at: string | null;
+  status: ApplicationDocumentRequestStatus;
+  requested_by_profile_id: string;
+  requested_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApplicationDocument {
+  id: string;
+  application_id: string;
+  request_id: string;
+  storage_path: string;
+  original_filename: string;
+  mime_type: 'application/pdf' | 'image/jpeg' | 'image/png';
+  size_bytes: number;
+  submitted_by: 'applicant' | 'staff';
+  uploaded_by_profile_id: string | null;
+  review_status: ApplicationDocumentReviewStatus;
+  rejection_reason: string | null;
+  reviewed_by_profile_id: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
 export type LeadStatus = 'new' | 'successful' | 'deal_lost' | 'on_the_process' | 'follow_up';
 export type LeadAccountType = 'prepaid_account' | 'deposit' | 'credit_line';
 export type Lead = Database['public']['Tables']['leads']['Row'];

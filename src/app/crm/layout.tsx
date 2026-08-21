@@ -1,5 +1,6 @@
 import { Sidebar } from '@/components/crm/Sidebar'
 import { Header } from '@/components/crm/Header'
+import { WexFreshnessTrigger } from '@/components/crm/WexFreshnessTrigger'
 import { CRM_ROLES, getCurrentProfile } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 
@@ -15,6 +16,7 @@ export default async function CRMLayout({
 
   return (
     <div className="crm-shell flex h-screen overflow-hidden bg-background text-foreground transition-colors">
+      {['owner', 'admin', 'general_manager'].includes(profile.role) && <WexFreshnessTrigger />}
       <div className="hidden lg:fixed lg:inset-y-0 lg:z-30 lg:flex lg:w-[202px] lg:flex-col">
         <Sidebar profile={profile} />
       </div>

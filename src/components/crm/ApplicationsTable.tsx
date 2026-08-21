@@ -13,6 +13,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Application } from '@/types/database.types'
 import { ApplicationDrawer } from './drawers/ApplicationDrawer'
 import { NewApplicationModal } from './NewApplicationModal'
+import { InviteApplicationDialog } from './InviteApplicationDialog'
 import { ApplicationPipelineChart } from './EntityOverviewCharts'
 import { DataTable } from './ui/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -98,8 +99,9 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
     pending: applications.filter((a) => a.status === 'pending').length,
     approved: applications.filter((a) => a.status === 'approved').length,
     denied: applications.filter((a) => a.status === 'denied').length,
-    underReview: applications.filter((a) => a.status === 'pending' && new Date(a.updated_at) >= last30Start).length,
-  }), [applications, last30Start])
+    underReview: applications.filter((a) => a.status === 'under_review').length,
+    needsDocuments: applications.filter((a) => a.status === 'needs_documents').length,
+  }), [applications])
 
   const approvedThisMonth = applications.filter((a) => a.status === 'approved' && new Date(a.reviewed_at ?? a.updated_at) >= monthStart).length
   const decisions = counts.approved + counts.denied
@@ -229,6 +231,7 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
           <Button variant="outline" size="sm" onClick={() => router.refresh()}>
             <RefreshCw data-icon="inline-start" />Refresh
           </Button>
+          <InviteApplicationDialog />
           <Button size="sm" onClick={() => setIsNewModalOpen(true)} className="bg-primary text-primary-foreground hover:bg-primary/90">
             <Plus data-icon="inline-start" />New Application
           </Button>
@@ -301,6 +304,8 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
                   <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
                     <NativeSelectOption value="all">All</NativeSelectOption>
                     <NativeSelectOption value="pending">Pending</NativeSelectOption>
+                    <NativeSelectOption value="under_review">Under review</NativeSelectOption>
+                    <NativeSelectOption value="needs_documents">Needs documents</NativeSelectOption>
                     <NativeSelectOption value="approved">Approved</NativeSelectOption>
                     <NativeSelectOption value="denied">Denied</NativeSelectOption>
                   </FilterSelect>
@@ -358,7 +363,7 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
                   { label: 'Pending', count: counts.pending, pct: applications.length ? Math.round(counts.pending / applications.length * 100) : 0, color: 'bg-[#f97316]' },
                   { label: 'Under Review', count: counts.underReview, pct: applications.length ? Math.round(counts.underReview / applications.length * 100) : 0, color: 'bg-[#2563eb]' },
                   { label: 'Approved', count: counts.approved, pct: decisions ? Math.round(counts.approved / decisions * 100) : 0, color: 'bg-[#14b8a6]' },
-                  { label: 'Needs Docs', count: 0, pct: 0, color: 'bg-[#a855f7]' },
+                  { label: 'Needs Docs', count: counts.needsDocuments, pct: applications.length ? Math.round(counts.needsDocuments / applications.length * 100) : 0, color: 'bg-[#a855f7]' },
                   { label: 'Rejected', count: counts.denied, pct: decisions ? Math.round(counts.denied / decisions * 100) : 0, color: 'bg-destructive' },
                 ].map(({ label, count, pct, color }) => (
                   <div key={label} className="flex items-center gap-2 text-xs">
@@ -468,9 +473,11 @@ function ApplicationStatusBadge({ status }: { status: Application['status'] }) {
     <Badge variant="outline" className={cn(
       status === 'approved' && 'border-status-success-foreground/15 bg-status-success text-status-success-foreground',
       status === 'pending' && 'border-status-follow-up-foreground/15 bg-status-follow-up text-status-follow-up-foreground',
+      status === 'under_review' && 'border-status-new-foreground/15 bg-status-new text-status-new-foreground',
+      status === 'needs_documents' && 'border-status-process-foreground/15 bg-status-process text-status-process-foreground',
       status === 'denied' && 'border-destructive/15 bg-destructive/10 text-destructive',
     )}>
-      {status[0].toUpperCase() + status.slice(1)}
+      {status.split('_').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ')}
     </Badge>
   )
 }

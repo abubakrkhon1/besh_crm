@@ -1,0 +1,53 @@
+import { z } from 'zod'
+
+const requiredText = z.string().trim().min(1, 'This field is required.')
+const optionalText = z.string().trim().min(1).nullable()
+
+export const applicationSubmissionSchema = z.object({
+  company_legal_name: requiredText,
+  doing_business_as: optionalText,
+  business_phone: requiredText,
+  first_name: requiredText,
+  last_name: requiredText,
+  title: requiredText,
+  email: z.string().trim().email(),
+  country: requiredText,
+  business_physical_address: requiredText,
+  address_line_2: optionalText,
+  city: requiredText,
+  state_province: requiredText,
+  postal_code: requiredText,
+  total_trucks: z.number().int().positive(),
+  total_drivers: z.number().int().positive(),
+  team_drivers_slip_seat: z.boolean(),
+  legal_structure: requiredText,
+  business_description: requiredText,
+  year_established: z.number().int().min(1800).max(new Date().getFullYear()),
+  parent_company: optionalText,
+  promotional_code: optionalText,
+  taxpayer_id: z.string().regex(/^\d{9}$/),
+  business_identifier_type: optionalText,
+  business_identifier_number: optionalText,
+  annual_gross_revenue: z.number().nonnegative().nullable(),
+  industry: requiredText,
+  account_type: requiredText,
+  projected_spend: z.number().nonnegative(),
+  payment_method: requiredText,
+  days_of_payment: optionalText,
+  financial_institution: requiredText,
+  checking_account_number: z.string().regex(/^\d+$/),
+  aba_routing_number: z.string().regex(/^\d{9}$/),
+  residential_country: requiredText,
+  residential_address: requiredText,
+  residential_city: requiredText,
+  residential_state_province: requiredText,
+  residential_postal_code: requiredText,
+  social_security_number: z.string().regex(/^\d{3}-\d{2}-\d{4}$/),
+  date_of_birth: requiredText,
+  residential_phone: requiredText,
+  mobile_number: optionalText,
+  authorized_signer: z.boolean().refine(Boolean),
+  terms_accepted: z.boolean().refine(Boolean),
+})
+
+export type ApplicationSubmission = z.infer<typeof applicationSubmissionSchema>

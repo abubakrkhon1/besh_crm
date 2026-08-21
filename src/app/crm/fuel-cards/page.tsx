@@ -7,6 +7,7 @@ import { FuelCardStatusChart } from '@/components/crm/FuelCardStatusChart'
 import { PaginatedTable } from '@/components/crm/ui/PaginatedTable'
 import { TablePagination } from '@/components/crm/ui/TablePagination'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -59,13 +60,14 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   cardQuery = cardQuery.order(params.sort, { ascending: params.dir === 'asc' })
   if (params.sort === 'status') cardQuery = cardQuery.order('last_synced_at', { ascending: false })
 
-  const [cardsResult, summaryResult, syncResult, failedRunsResult, transactionStats, activityResult] = await Promise.all([
+  const [cardsResult, summaryResult, syncResult, failedRunsResult, transactionStats, activityResult, alertsResult] = await Promise.all([
     cardQuery.range(offset, offset + params.pageSize - 1),
     db.from('fuel_cards').select('id,card_last4,customer_id,driver_name,external_driver_id,unit_number,status,policy_number,is_overridden,last_synced_at,customers(company_name,contact_name)', { count: 'exact' }).eq('provider', 'wex_efs').range(0, 9_999),
     db.from('fuel_card_sync_runs').select('completed_at,cards_received,cards_unmatched').eq('provider', 'wex_efs').eq('status', 'succeeded').order('completed_at', { ascending: false }).limit(1).maybeSingle(),
     db.from('fuel_card_sync_runs').select('id,started_at,completed_at,error_message').eq('provider', 'wex_efs').eq('status', 'failed').order('started_at', { ascending: false }).limit(3),
     getGeneralManagerDashboard(range.rangeStart, range.rangeEnd),
     db.from('fuel_transactions').select('id,transaction_date,amount,merchant_name,merchant_state,provider_transaction_type,customers(id,company_name,contact_name),fuel_cards(id,card_last4,driver_name)').eq('provider', 'wex_efs').eq('status', 'posted').gte('transaction_date', range.rangeStart).lt('transaction_date', range.rangeEnd).order('transaction_date', { ascending: false }).limit(25),
+    db.from('wex_sync_alerts').select('id,severity,title,message,updated_at').eq('provider', 'wex_efs').eq('status', 'open').order('updated_at', { ascending: false }).limit(3),
   ])
 
   const cards = (cardsResult.data ?? []) as FuelCardRow[]
@@ -84,6 +86,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   const sync = syncResult.data
   const syncHealthy = Boolean(sync?.completed_at && Date.parse(sync.completed_at) >= Date.parse(staleCutoff))
   const activity = (activityResult.data ?? []) as Array<Record<string, unknown>>
+  const syncAlerts = (alertsResult.data ?? []) as Array<{ id: string, severity: 'warning' | 'critical', title: string, message: string, updated_at: string }>
 
   return (
     <div className="flex animate-fade-in flex-col gap-4 pb-12">
@@ -101,6 +104,16 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
           <FuelCardSyncButton />
         </div>
       </header>
+
+      {syncAlerts[0] && (
+        <Alert variant={syncAlerts[0].severity === 'critical' ? 'destructive' : 'default'}>
+          <AlertTriangle />
+          <AlertTitle>{syncAlerts[0].title}</AlertTitle>
+          <AlertDescription>
+            {syncAlerts[0].message}{syncAlerts.length > 1 ? ` ${syncAlerts.length - 1} additional sync alert${syncAlerts.length === 2 ? '' : 's'} are open.` : ''}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
         <main className="flex min-w-0 flex-col gap-4">

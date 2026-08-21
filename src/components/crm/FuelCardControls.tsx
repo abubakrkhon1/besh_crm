@@ -4,7 +4,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
-import { executeWexSync, startWexSync } from '@/app/actions/fuel-cards'
+import { startWexSync } from '@/app/actions/fuel-cards'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
@@ -12,7 +12,7 @@ import { Progress } from '@/components/ui/progress'
 
 type SyncRunResponse = {
   ok: boolean
-  status: 'running' | 'succeeded' | 'failed'
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
   metadata?: Record<string, unknown>
   errorMessage?: string | null
 }
@@ -156,16 +156,16 @@ export function FuelCardSyncButton({ label = 'Sync All WEX Data' }: { label?: st
         })
         return
       }
-
-      const execution = executeWexSync({ runId: started.runId })
-      const nextUpdate = () => Promise.race([
-        execution.then((result) => ({ type: 'complete' as const, result })),
-        wait(3_000).then(() => ({ type: 'poll' as const })),
-      ])
-      let update = await nextUpdate()
+      toast.loading('WEX synchronization queued', {
+        id: toastId,
+        description: 'The background worker will process account data and recent transactions. You can leave this page.',
+        duration: Infinity,
+        closeButton: false,
+      })
       let lastProgressValue = startingProgress.value
-
-      while (update.type === 'poll') {
+      let finished = false
+      for (let poll = 0; poll < 100 && !finished; poll++) {
+        await wait(3_000)
         const current = await fetchSyncProgress(started.runId)
         if (current?.ok) {
           const currentProgress = displayProgress(current)
@@ -178,29 +178,29 @@ export function FuelCardSyncButton({ label = 'Sync All WEX Data' }: { label?: st
               closeButton: false,
             })
           }
+          if (current.status === 'succeeded') {
+            toast.success('WEX synchronization complete', {
+              id: toastId,
+              description: 'WEX account data and recent transactions are up to date.',
+              duration: 6000,
+              closeButton: true,
+            })
+            finished = true
+          } else if (current.status === 'failed') {
+            toast.error('Synchronization stopped', {
+              id: toastId,
+              description: current.errorMessage || 'The background job exhausted its retries.',
+              duration: 6000,
+              closeButton: true,
+            })
+            finished = true
+          }
         }
-        update = await nextUpdate()
       }
-
-      const result = update.result
-      if (result.ok) {
-        const finalProgress = {
-          value: 100,
-          ceiling: 100,
-          title: 'Synchronization complete',
-          description: result.message,
-          status: 'succeeded',
-        } satisfies SyncProgress
-        toast.success('WEX synchronization complete', {
+      if (!finished) {
+        toast.info('WEX synchronization is still running', {
           id: toastId,
-          description: <SyncToastProgress progress={finalProgress} description={result.message} />,
-          duration: 6000,
-          closeButton: true,
-        })
-      } else {
-        toast.error('Synchronization stopped', {
-          id: toastId,
-          description: result.message,
+          description: 'It will continue safely in the background. Refresh later to see the latest data.',
           duration: 6000,
           closeButton: true,
         })

@@ -2,6 +2,7 @@
 
 import { createClient, requireRoles } from '@/lib/supabase/server'
 import { Application, ApplicationStatus } from '@/types/database.types'
+import { applicationSubmissionSchema, type ApplicationSubmission } from '@/lib/validation/applications'
 import { revalidatePath } from 'next/cache'
 
 const APPLICATION_ROLES = ['owner', 'admin', 'general_manager', 'sales_manager'] as const
@@ -121,7 +122,7 @@ export async function reviewApplicationAction(id: string, status: ApplicationSta
   await updateApplicationStatus(id, status, denialReason)
 }
 
-export async function createApplication(data: Partial<Application>) {
+export async function createApplication(data: ApplicationSubmission) {
   const supabase = await createClient()
 
   // Get current user
@@ -130,10 +131,15 @@ export async function createApplication(data: Partial<Application>) {
     return { error: 'Unauthorized' }
   }
 
+  const parsed = applicationSubmissionSchema.safeParse(data)
+  if (!parsed.success) {
+    return { error: 'Please review the form and complete every required field.' }
+  }
+
   // Insert the application, linking it to the current user
   const { data: createdApp, error } = await supabase
     .from('applications')
-    .insert([{ ...data, auth_user_id: user.id, status: 'pending' }])
+    .insert([{ ...parsed.data, auth_user_id: user.id, status: 'pending' }])
     .select()
     .single()
 

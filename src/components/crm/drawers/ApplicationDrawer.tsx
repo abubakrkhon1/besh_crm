@@ -78,8 +78,8 @@ export function ApplicationDrawer({ application, isOpen, onClose }: ApplicationD
                 </SheetDescription>
               </div>
               <StatusBadge
-                status={activeApplication.status === 'pending' ? 'pending' : activeApplication.status === 'approved' ? 'success' : 'danger'}
-                label={activeApplication.status.charAt(0).toUpperCase() + activeApplication.status.slice(1)}
+                status={activeApplication.status === 'approved' ? 'success' : activeApplication.status === 'denied' ? 'danger' : activeApplication.status === 'under_review' ? 'info' : 'pending'}
+                label={activeApplication.status.split('_').map((part: string) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')}
               />
             </div>
             

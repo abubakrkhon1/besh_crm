@@ -1,10 +1,10 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3, FileCheck, FileInput, Mail, Phone, TrendingUp, Truck, UserRound } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarDays, CheckCircle2, Clock3, FileCheck, Mail, Phone, TrendingUp, Truck, UserRound } from 'lucide-react'
 import { getApplication, reviewApplicationAction } from '@/app/actions/applications'
 import { StatusBadge } from '@/components/crm/ui/StatusBadge'
 import { Badge } from '@/components/ui/badge'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,18 +20,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Application } from '@/types/database.types'
+import { RequestDocumentsDialog } from '@/components/crm/RequestDocumentsDialog'
+import { ApplicationDocumentsReview } from '@/components/crm/ApplicationDocumentsReview'
+import { getStaffApplicationDocuments } from '@/app/actions/application-documents'
 import { format } from 'date-fns'
 
 export default async function ApplicationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const application = await getApplication(id)
+  const [application, documentRequests] = await Promise.all([getApplication(id), getStaffApplicationDocuments(id)])
 
   if (!application) notFound()
   const approveAction = reviewApplicationAction.bind(null, application.id, 'approved')
   const rejectAction = reviewApplicationAction.bind(null, application.id, 'denied')
   const applicantName = `${application.first_name} ${application.last_name}`
-  const reviewStage = application.status === 'pending' ? 1 : 5
-  const reviewLabel = application.status === 'pending' ? 'Application Received' : application.status === 'approved' ? 'Application Approved' : 'Application Denied'
+  const reviewStage = application.status === 'pending' ? 1 : application.status === 'needs_documents' ? 2 : application.status === 'under_review' ? 3 : 5
+  const reviewLabel = application.status.split('_').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ')
+  const isCompleted = application.status === 'approved' || application.status === 'denied'
 
   return (
     <div className="animate-fade-in pb-10 font-[family-name:var(--font-inter)]">
@@ -60,9 +64,9 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
               </div>
               <div className="text-right"><p className="text-[13px] font-medium text-muted-foreground">Stage {reviewStage} of 5</p><p className="text-[11px] text-muted-foreground">{reviewLabel}</p></div>
             </div>
-            <Button variant="outline" className="h-11 px-5 text-sm" disabled title="Document requests are coming soon"><FileInput data-icon="inline-start" />Request Documents</Button>
+            <RequestDocumentsDialog applicationId={application.id} disabled={isCompleted} />
             <AlertDialog>
-              <AlertDialogTrigger render={<button type="button" disabled={application.status !== 'pending'} className={buttonVariants({ variant: 'ghost', className: 'h-11 px-5 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive' })} />}>Reject</AlertDialogTrigger>
+              <AlertDialogTrigger render={<button type="button" disabled={isCompleted} className={buttonVariants({ variant: 'ghost', className: 'h-11 px-5 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive' })} />}>Reject</AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Reject application?</AlertDialogTitle>
@@ -77,7 +81,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
               </AlertDialogContent>
             </AlertDialog>
             <AlertDialog>
-              <AlertDialogTrigger render={<button type="button" disabled={application.status !== 'pending'} className={buttonVariants({ className: 'h-11 px-5 text-sm' })} />}><CheckCircle2 data-icon="inline-start" />Approve</AlertDialogTrigger>
+              <AlertDialogTrigger render={<button type="button" disabled={isCompleted} className={buttonVariants({ className: 'h-11 px-5 text-sm' })} />}><CheckCircle2 data-icon="inline-start" />Approve</AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Approve application?</AlertDialogTitle>
@@ -101,7 +105,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
 
       <Tabs defaultValue="overview" className="w-full gap-0">
         <TabsList variant="line" className="mb-4 h-8 w-full justify-start gap-8 overflow-x-auto border-b p-0">
-          {['overview', 'company', 'fleet', 'credit', 'applicant', 'review'].map((tab) => (
+          {['overview', 'company', 'fleet', 'credit', 'applicant', 'documents', 'review'].map((tab) => (
             <TabsTrigger key={tab} value={tab} className="flex-none rounded-none px-5 py-0 text-sm capitalize data-active:bg-transparent data-active:text-primary after:bottom-0 after:bg-primary focus-visible:ring-0">
               {tab}
             </TabsTrigger>
@@ -196,6 +200,10 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
           ]} />
         </TabsContent>
 
+        <TabsContent value="documents" className="mt-0">
+          <ApplicationDocumentsReview requests={documentRequests} />
+        </TabsContent>
+
         <TabsContent value="review" className="mt-0 grid gap-6 xl:grid-cols-2">
           <Section title="Review Status" columns={[
             ['Status', application.status],
@@ -287,8 +295,8 @@ function Check({ label, value }: { label: string; value: boolean }) {
 function ApplicationStatus({ status }: { status: Application['status'] }) {
   return (
     <StatusBadge
-      status={status === 'pending' ? 'pending' : status === 'approved' ? 'success' : 'danger'}
-      label={status}
+      status={status === 'approved' ? 'success' : status === 'denied' ? 'danger' : status === 'under_review' ? 'info' : 'pending'}
+      label={formatLabel(status)}
       className="h-8 px-4 text-sm capitalize"
     />
   )

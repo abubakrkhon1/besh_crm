@@ -4,21 +4,28 @@ import { useState, useTransition, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Application } from '@/types/database.types'
 import { createApplication } from '@/app/actions/applications'
-import { X, Plus, Loader2 } from 'lucide-react'
+import { submitInvitedApplication } from '@/app/actions/application-invitations'
+import type { ApplicationSubmission } from '@/lib/validation/applications'
+import { CheckCircle2, X, Plus, Loader2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface NewApplicationModalProps {
-  onClose: () => void
-  onSuccess: (app: Application) => void
+  onClose?: () => void
+  onSuccess?: (app: Application) => void
+  embedded?: boolean
+  invitationToken?: string
+  initialEmail?: string
 }
 
 const US_STATES = [
   'AK', 'AL', 'AR', 'AS', 'AZ', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'FM', 'GA', 'GU', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MH', 'MI', 'MN', 'MO', 'MP', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'PR', 'PW', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VI', 'VT', 'WA', 'WI', 'WV', 'WY'
 ]
 
-export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalProps) {
+export function NewApplicationModal({ onClose, onSuccess, embedded = false, invitationToken, initialEmail = '' }: NewApplicationModalProps) {
   const [mounted, setMounted] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [submitted, setSubmitted] = useState(false)
 
   // Dynamic dropdown states
   const [accountType, setAccountType] = useState('Open Line of Credit')
@@ -28,11 +35,11 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
     // This portal must wait for the browser document before rendering.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
-    document.body.style.overflow = 'hidden'
+    if (!embedded) document.body.style.overflow = 'hidden'
     return () => {
-      document.body.style.overflow = 'auto'
+      if (!embedded) document.body.style.overflow = 'auto'
     }
-  }, [])
+  }, [embedded])
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -40,6 +47,8 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
     
     const form = e.currentTarget
     const formData = new FormData(form)
+    const value = (name: string) => String(formData.get(name) ?? '').trim()
+    const optionalValue = (name: string) => value(name) || null
     
     // Validations for confirm fields
     if (formData.get('email') !== formData.get('confirm_email')) {
@@ -60,71 +69,87 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
     }
 
     startTransition(async () => {
-      const dataToSubmit: any = {
-        company_legal_name: formData.get('company_legal_name'),
-        doing_business_as: formData.get('doing_business_as') || null,
-        business_phone: formData.get('business_phone'),
-        first_name: formData.get('first_name'),
-        last_name: formData.get('last_name'),
-        title: formData.get('title'),
-        email: formData.get('email'),
-        country: formData.get('country'),
-        business_physical_address: formData.get('business_physical_address'),
-        address_line_2: formData.get('address_line_2') || null,
-        city: formData.get('city'),
-        state_province: formData.get('state_province'),
-        postal_code: formData.get('postal_code'),
-        total_trucks: Number(formData.get('total_trucks')),
-        total_drivers: Number(formData.get('total_drivers')),
+      const dataToSubmit: ApplicationSubmission = {
+        company_legal_name: value('company_legal_name'),
+        doing_business_as: optionalValue('doing_business_as'),
+        business_phone: value('business_phone'),
+        first_name: value('first_name'),
+        last_name: value('last_name'),
+        title: value('title'),
+        email: value('email'),
+        country: value('country'),
+        business_physical_address: value('business_physical_address'),
+        address_line_2: optionalValue('address_line_2'),
+        city: value('city'),
+        state_province: value('state_province'),
+        postal_code: value('postal_code'),
+        total_trucks: Number(value('total_trucks')),
+        total_drivers: Number(value('total_drivers')),
         team_drivers_slip_seat: formData.get('team_drivers_slip_seat') === 'on',
-        legal_structure: formData.get('legal_structure'),
-        business_description: formData.get('business_description'),
-        year_established: Number(formData.get('year_established')),
-        parent_company: formData.get('parent_company') || null,
-        promotional_code: formData.get('promotional_code') || null,
-        taxpayer_id: formData.get('taxpayer_id'),
-        business_identifier_type: formData.get('business_identifier_type') === 'None' ? null : formData.get('business_identifier_type'),
-        business_identifier_number: formData.get('business_identifier_number') || null,
-        annual_gross_revenue: formData.get('annual_gross_revenue') ? Number(formData.get('annual_gross_revenue')) : null,
-        industry: formData.get('industry'),
-        account_type: formData.get('account_type'),
-        projected_spend: Number(formData.get('projected_spend')),
-        payment_method: formData.get('payment_method'),
-        days_of_payment: formData.get('days_of_payment') || null,
-        financial_institution: formData.get('financial_institution'),
-        checking_account_number: formData.get('checking_account_number'),
-        aba_routing_number: formData.get('aba_routing_number'),
-        residential_country: formData.get('residential_country'),
-        residential_address: formData.get('residential_address'),
-        residential_city: formData.get('residential_city'),
-        residential_state_province: formData.get('residential_state_province'),
-        residential_postal_code: formData.get('residential_postal_code'),
-        social_security_number: formData.get('social_security_number'),
-        date_of_birth: formData.get('date_of_birth'),
-        residential_phone: formData.get('residential_phone'),
-        mobile_number: formData.get('mobile_number') || null,
+        legal_structure: value('legal_structure'),
+        business_description: value('business_description'),
+        year_established: Number(value('year_established')),
+        parent_company: optionalValue('parent_company'),
+        promotional_code: optionalValue('promotional_code'),
+        taxpayer_id: value('taxpayer_id'),
+        business_identifier_type: value('business_identifier_type') === 'None' ? null : optionalValue('business_identifier_type'),
+        business_identifier_number: optionalValue('business_identifier_number'),
+        annual_gross_revenue: value('annual_gross_revenue') ? Number(value('annual_gross_revenue')) : null,
+        industry: value('industry'),
+        account_type: value('account_type'),
+        projected_spend: Number(value('projected_spend')),
+        payment_method: value('payment_method'),
+        days_of_payment: optionalValue('days_of_payment'),
+        financial_institution: value('financial_institution'),
+        checking_account_number: value('checking_account_number'),
+        aba_routing_number: value('aba_routing_number'),
+        residential_country: value('residential_country'),
+        residential_address: value('residential_address'),
+        residential_city: value('residential_city'),
+        residential_state_province: value('residential_state_province'),
+        residential_postal_code: value('residential_postal_code'),
+        social_security_number: value('social_security_number'),
+        date_of_birth: value('date_of_birth'),
+        residential_phone: value('residential_phone'),
+        mobile_number: optionalValue('mobile_number'),
         authorized_signer: authSigner,
         terms_accepted: authSigner,
       }
 
-      const result = await createApplication(dataToSubmit)
-      if (result.error) {
-        setError(result.error)
-      } else if (result.success && result.application) {
-        onSuccess(result.application)
+      if (invitationToken) {
+        const result = await submitInvitedApplication(invitationToken, dataToSubmit)
+        if (result.error) setError(result.error)
+        else if (result.success) setSubmitted(true)
+        return
       }
+
+      const result = await createApplication(dataToSubmit)
+      if (result.error) setError(result.error)
+      else if (result.success && result.application) onSuccess?.(result.application)
     })
   }
 
   if (!mounted) return null
 
-  return createPortal(
+  if (embedded && submitted) {
+    return (
+      <div className="flex min-h-[26rem] flex-col items-center justify-center gap-4 rounded-2xl border bg-card p-8 text-center shadow-sm">
+        <CheckCircle2 className="size-12 text-status-success-foreground" />
+        <div className="flex max-w-md flex-col gap-2">
+          <h2 className="text-2xl font-bold">Application submitted</h2>
+          <p className="text-muted-foreground">Thank you. The BESH team has received your application and will contact you after it has been reviewed.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const content = (
     <div 
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 sm:p-6"
-      onClick={onClose}
+      className={cn(!embedded && 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6')}
+      onClick={() => !embedded && onClose?.()}
     >
       <div 
-        className="w-full max-w-4xl max-h-[90vh] flex flex-col bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden animate-fade-in"
+        className={cn('flex w-full flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl animate-fade-in', embedded ? 'min-h-[36rem]' : 'max-h-[90vh] max-w-4xl')}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center p-6 border-b border-border bg-surface-raised shrink-0">
@@ -139,12 +164,15 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
               </p>
             </div>
           </div>
-          <button 
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground p-2 rounded-lg hover:bg-surface transition-colors"
-          >
-            <X size={24} />
-          </button>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground p-2 rounded-lg hover:bg-surface transition-colors"
+              aria-label="Close application form"
+            >
+              <X size={24} />
+            </button>
+          )}
         </div>
 
         <div className="overflow-y-auto p-6">
@@ -154,7 +182,7 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
             </div>
           )}
 
-          <form id="full-app-form" onSubmit={handleSubmit} className="space-y-10">
+          <form id={embedded ? 'public-app-form' : 'full-app-form'} onSubmit={handleSubmit} className="space-y-10">
             {/* Applicant Information */}
             <section className="space-y-5">
               <h3 className="text-lg font-semibold text-foreground border-b border-border pb-2">Applicant Information</h3>
@@ -198,11 +226,11 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Email Address *</label>
-                  <input required type="email" name="email" className="input-field w-full" placeholder="john@example.com" />
+                  <input required type="email" name="email" className="input-field w-full" placeholder="john@example.com" defaultValue={initialEmail} readOnly={Boolean(invitationToken)} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Confirm Email Address *</label>
-                  <input required type="email" name="confirm_email" className="input-field w-full" placeholder="john@example.com" />
+                  <input required type="email" name="confirm_email" className="input-field w-full" placeholder="john@example.com" defaultValue={initialEmail} readOnly={Boolean(invitationToken)} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Country *</label>
@@ -483,16 +511,18 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
         </div>
 
         <div className="p-6 border-t border-border bg-surface-raised shrink-0 flex justify-end gap-3">
+          {!embedded && (
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isPending}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+          )}
           <button
-            type="button"
-            onClick={onClose}
-            disabled={isPending}
-            className="btn-secondary"
-          >
-            Cancel
-          </button>
-          <button
-            form="full-app-form"
+            form={embedded ? 'public-app-form' : 'full-app-form'}
             type="submit"
             disabled={isPending}
             className="btn-primary flex items-center gap-2"
@@ -502,7 +532,8 @@ export function NewApplicationModal({ onClose, onSuccess }: NewApplicationModalP
           </button>
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
   )
+
+  return embedded ? content : createPortal(content, document.body)
 }
