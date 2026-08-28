@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { getLoginFieldErrors, loginSchema } from './auth'
+import {
+  getLoginFieldErrors,
+  getResetPasswordFieldErrors,
+  loginSchema,
+  resetPasswordSchema,
+} from './auth'
 
 describe('loginSchema', () => {
   it('trims and normalizes email addresses', () => {
@@ -35,5 +40,29 @@ describe('loginSchema', () => {
     expect(loginSchema.safeParse({ email: 'rep@example.com', password: 'abc\0def' }).success).toBe(false)
     expect(loginSchema.safeParse({ email: `${'a'.repeat(250)}@example.com`, password: 'password' }).success).toBe(false)
     expect(loginSchema.safeParse({ email: 'rep@example.com', password: 'a'.repeat(1_025) }).success).toBe(false)
+  })
+})
+
+describe('resetPasswordSchema', () => {
+  it('accepts a matching strong password', () => {
+    expect(resetPasswordSchema.safeParse({
+      password: 'NewPassword1!',
+      confirmPassword: 'NewPassword1!',
+    }).success).toBe(true)
+  })
+
+  it('reports password strength and confirmation errors by field', () => {
+    const result = resetPasswordSchema.safeParse({
+      password: 'password',
+      confirmPassword: 'different',
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(getResetPasswordFieldErrors(result.error)).toEqual({
+        password: 'Password must contain an uppercase letter.',
+        confirmPassword: 'Passwords do not match.',
+      })
+    }
   })
 })

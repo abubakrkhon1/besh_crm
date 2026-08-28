@@ -55,7 +55,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  if (request.nextUrl.pathname.startsWith('/driver-activation/')) {
+  if (
+    request.nextUrl.pathname.startsWith('/driver-activation/') ||
+    request.nextUrl.pathname === '/reset-password'
+  ) {
     supabaseResponse.headers.set('Cache-Control', 'private, no-store, max-age=0')
     supabaseResponse.headers.set('Referrer-Policy', 'no-referrer')
     supabaseResponse.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')

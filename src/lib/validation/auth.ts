@@ -33,3 +33,32 @@ export function getLoginFieldErrors(error: z.ZodError): LoginFieldErrors {
 
   return fieldErrors
 }
+
+export const resetPasswordSchema = z.object({
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters.')
+    .max(72, 'Password must be 72 characters or fewer.')
+    .regex(/[A-Z]/, 'Password must contain an uppercase letter.')
+    .regex(/[0-9]/, 'Password must contain a number.')
+    .regex(/[^A-Za-z0-9]/, 'Password must contain a special character.'),
+  confirmPassword: z.string().min(1, 'Confirm your new password.'),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: 'Passwords do not match.',
+  path: ['confirmPassword'],
+})
+
+export type ResetPasswordField = keyof z.input<typeof resetPasswordSchema>
+export type ResetPasswordFieldErrors = Partial<Record<ResetPasswordField, string>>
+
+export function getResetPasswordFieldErrors(error: z.ZodError): ResetPasswordFieldErrors {
+  const fieldErrors: ResetPasswordFieldErrors = {}
+
+  for (const issue of error.issues) {
+    const field = issue.path[0]
+    if ((field === 'password' || field === 'confirmPassword') && !fieldErrors[field]) {
+      fieldErrors[field] = issue.message
+    }
+  }
+
+  return fieldErrors
+}
