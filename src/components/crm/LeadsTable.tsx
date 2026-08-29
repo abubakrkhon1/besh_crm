@@ -1,8 +1,9 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useState } from 'react'
+import { useActionState, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, ChevronDown, Clock, Loader2, Mail, Pencil, Phone, UserRound } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { CalendarClock, Check, ChevronDown, Clock, Loader2, Mail, MessageSquare, Pencil, Phone, UserRound, UserRoundPlus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -21,11 +22,24 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
-import { LeadWithRepresentative, updateLead, UpdateLeadState } from '@/app/actions/leads'
-import { LeadAccountType, LeadStatus, Profile } from '@/types/database.types'
+import {
+  addLeadNote,
+  AddLeadNoteState,
+  assignLead,
+  AssignLeadState,
+  getLeadActivities,
+  LeadWithRepresentative,
+  updateLead,
+  updateLeadWorkPlan,
+  UpdateLeadWorkPlanState,
+  UpdateLeadState,
+} from '@/app/actions/leads'
+import { LeadAccountType, LeadActivity, LeadPriority, LeadStatus, Profile } from '@/types/database.types'
 import { cn } from '@/lib/utils'
 import { NewLeadDialog } from '@/components/crm/NewLeadDialog'
 import { PaginatedTable } from '@/components/crm/ui/PaginatedTable'
+import { LocalDateTime } from '@/components/ui/local-date-time'
+import { createClient } from '@/lib/supabase/client'
 
 const statusLabels = {
   new: 'New',
@@ -49,6 +63,13 @@ const accountTypeLabels: Record<LeadAccountType, string> = {
   credit_line: 'Credit Line',
 }
 
+const priorityLabels: Record<LeadPriority, string> = {
+  low: 'Low',
+  normal: 'Normal',
+  high: 'High',
+  urgent: 'Urgent',
+}
+
 type StatusFilter = 'all' | LeadStatus
 
 const statusFilters: { value: StatusFilter; label: string }[] = [
@@ -68,6 +89,8 @@ interface LeadsTableProps {
   representatives?: Profile[]
   selectedRepresentativeId?: string
   canAddLead?: boolean
+  canAssignLeads?: boolean
+  canManageWorkPlan?: boolean
   showFilters?: boolean
   openNewLead?: boolean
 }
@@ -80,6 +103,8 @@ export function LeadsTable({
   representatives = [],
   selectedRepresentativeId,
   canAddLead = false,
+  canAssignLeads = false,
+  canManageWorkPlan = false,
   showFilters = false,
   openNewLead = false,
 }: LeadsTableProps) {
@@ -152,8 +177,10 @@ export function LeadsTable({
             <TableHead>Fleet</TableHead>
             <TableHead>Account type</TableHead>
             <TableHead>Source</TableHead>
+            <TableHead>Priority</TableHead>
             <TableHead>Status</TableHead>
             {showRepresentative && <TableHead>Sales agent</TableHead>}
+            <TableHead>Next follow-up</TableHead>
             <TableHead>Received</TableHead>
             <TableHead>Est. gallons</TableHead>
           </TableRow>
@@ -176,17 +203,21 @@ export function LeadsTable({
               <TableCell className="text-muted-foreground">{formatFleetSize(lead.fleet_size)}</TableCell>
               <TableCell className="text-muted-foreground">{accountTypeLabels[lead.account_type]}</TableCell>
               <TableCell className="capitalize text-muted-foreground">{lead.source.replaceAll('_', ' ')}</TableCell>
+              <TableCell><LeadPriorityBadge priority={lead.priority} /></TableCell>
               <TableCell>
                 <Badge variant="outline" className={statusBadgeStyles[lead.status]}>
                   {statusLabels[lead.status]}
                 </Badge>
               </TableCell>
               {showRepresentative && <TableCell>{lead.representative?.full_name ?? lead.representative?.email ?? 'Unassigned'}</TableCell>}
+              <TableCell className="whitespace-nowrap text-muted-foreground">
+                {lead.next_follow_up_at ? <LocalDateTime value={lead.next_follow_up_at} variant="compact" /> : 'Not scheduled'}
+              </TableCell>
               <TableCell className={cn('font-semibold', receivedUrgencyClass(lead.created_at))}>{formatReceived(lead.created_at)}</TableCell>
               <TableCell className="text-muted-foreground">{formatGallons(lead.estimated_monthly_gallons)}</TableCell>
             </TableRow>
           ))}
-        columnCount={showRepresentative ? 9 : 8}
+        columnCount={showRepresentative ? 11 : 10}
         itemLabel="leads"
         emptyMessage="No leads match the current filters."
       />
@@ -198,6 +229,9 @@ export function LeadsTable({
           setSelectedLead(null)
           router.refresh()
         }}
+        representatives={representatives}
+        canAssignLeads={canAssignLeads}
+        canManageWorkPlan={canManageWorkPlan}
       />
     </div>
   )
@@ -207,26 +241,76 @@ function LeadDetailsSheet({
   lead,
   onOpenChange,
   onUpdated,
+  representatives,
+  canAssignLeads,
+  canManageWorkPlan,
 }: {
   lead: LeadWithRepresentative | null
   onOpenChange: (open: boolean) => void
   onUpdated: () => void
+  representatives: Profile[]
+  canAssignLeads: boolean
+  canManageWorkPlan: boolean
 }) {
   if (!lead) return null
 
-  return <LeadDetailsSheetContent lead={lead} onOpenChange={onOpenChange} onUpdated={onUpdated} />
+  return (
+    <LeadDetailsSheetContent
+      lead={lead}
+      onOpenChange={onOpenChange}
+      onUpdated={onUpdated}
+      representatives={representatives}
+      canAssignLeads={canAssignLeads}
+      canManageWorkPlan={canManageWorkPlan}
+    />
+  )
 }
 
 function LeadDetailsSheetContent({
   lead,
   onOpenChange,
   onUpdated,
+  representatives,
+  canAssignLeads,
+  canManageWorkPlan,
 }: {
   lead: LeadWithRepresentative
   onOpenChange: (open: boolean) => void
   onUpdated: () => void
+  representatives: Profile[]
+  canAssignLeads: boolean
+  canManageWorkPlan: boolean
 }) {
   const [isEditing, setIsEditing] = useState(false)
+  const queryClient = useQueryClient()
+  const { data: activities = [], isLoading: activitiesLoading } = useQuery({
+    queryKey: ['lead-activities', lead.id],
+    queryFn: () => getLeadActivities(lead.id),
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  })
+
+  useEffect(() => {
+    const supabase = createClient()
+    const queryKey = ['lead-activities', lead.id]
+    const channel = supabase
+      .channel(`lead-activities-${lead.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'lead_activities',
+          filter: `lead_id=eq.${lead.id}`,
+        },
+        () => { void queryClient.invalidateQueries({ queryKey }) },
+      )
+      .subscribe()
+
+    return () => { void supabase.removeChannel(channel) }
+  }, [lead.id, queryClient])
 
   const contactName = `${lead.contact_first_name} ${lead.contact_last_name}`.trim()
   const statusDate = getLeadStatusDate(lead)
@@ -242,6 +326,7 @@ function LeadDetailsSheetContent({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <LeadStatusBadge status={lead.status} />
+              <LeadPriorityBadge priority={lead.priority} />
               <span className="text-xs font-semibold text-muted-foreground">Received {formatReceived(lead.created_at)}</span>
             </div>
           </div>
@@ -276,6 +361,18 @@ function LeadDetailsSheetContent({
                   </Button>
                 </div>
 
+              {canAssignLeads && (
+                <LeadAssignmentForm
+                  lead={lead}
+                  representatives={representatives}
+                  onSuccess={onUpdated}
+                />
+              )}
+
+              {canManageWorkPlan && lead.status !== 'successful' && lead.status !== 'deal_lost' && (
+                <LeadWorkPlanForm lead={lead} onSuccess={onUpdated} />
+              )}
+
               <DetailSection title="Contact">
                 <DetailRow label="Name" value={contactName} />
                 <DetailRow label="Email" value={lead.email ?? '—'} />
@@ -288,7 +385,9 @@ function LeadDetailsSheetContent({
                 <DetailRow label="Est. monthly gallons" value={formatGallons(lead.estimated_monthly_gallons)} />
                 <DetailRow label="Account type" value={accountTypeLabels[lead.account_type]} />
                 <DetailRow label="Source" value={formatLabel(lead.source)} />
+                <DetailRow label="Priority" value={priorityLabels[lead.priority]} />
                 <DetailRow label="Assigned sales agent" value={lead.representative?.full_name ?? lead.representative?.email ?? 'Unassigned'} />
+                <DetailRow label="Next follow-up" value={lead.next_follow_up_at ? formatDateTime(lead.next_follow_up_at) : 'Not scheduled'} />
                 <DetailRow label="Received" value={formatDateTime(lead.created_at)} />
               </DetailSection>
 
@@ -303,16 +402,181 @@ function LeadDetailsSheetContent({
 
           <TabsContent value="activity" className="overflow-y-auto p-5">
             <div className="flex flex-col gap-4">
-              <ActivityItem icon={UserRound} title="Lead created" detail={`via ${formatLabel(lead.source)}`} date={lead.created_at} />
-              {statusDate && (
-                <ActivityItem icon={Clock} title={`Marked ${statusLabels[lead.status]}`} detail="Status updated" date={statusDate} />
+              {canManageWorkPlan && <LeadNoteForm lead={lead} onSuccess={onUpdated} />}
+              {activitiesLoading ? (
+                <p className="text-sm text-muted-foreground">Loading activity…</p>
+              ) : (
+                <>
+                  {activities.map((activity) => <StoredActivityItem key={activity.id} activity={activity} />)}
+                  {!activities.some((activity) => activity.activity_type === 'lead_created') && (
+                    <ActivityItem icon={UserRound} title="Lead created" detail={`via ${formatLabel(lead.source)}`} date={lead.created_at} />
+                  )}
+                  {!activities.length && statusDate && (
+                    <ActivityItem icon={Clock} title={`Marked ${statusLabels[lead.status]}`} detail="Status updated" date={statusDate} />
+                  )}
+                  {!activities.length && lead.assigned_at && lead.representative && (
+                    <ActivityItem
+                      icon={UserRoundPlus}
+                      title={`Assigned to ${lead.representative.full_name ?? lead.representative.email ?? 'sales agent'}`}
+                      detail="Current assignment"
+                      date={lead.assigned_at}
+                    />
+                  )}
+                </>
               )}
-              {!statusDate && <p className="text-sm text-muted-foreground">No status changes have been recorded yet.</p>}
             </div>
           </TabsContent>
         </Tabs>}
       </SheetContent>
     </Sheet>
+  )
+}
+
+const initialAssignLeadState: AssignLeadState = {}
+const emptySubscribe = () => () => {}
+
+function LeadAssignmentForm({
+  lead,
+  representatives,
+  onSuccess,
+}: {
+  lead: LeadWithRepresentative
+  representatives: Profile[]
+  onSuccess: () => void
+}) {
+  const [state, formAction, pending] = useActionState(assignLead, initialAssignLeadState)
+  const agentError = state.fieldErrors?.agentProfileId?.[0]
+
+  useEffect(() => {
+    if (state.success) onSuccess()
+  }, [state.success, onSuccess])
+
+  return (
+    <form action={formAction} className="rounded-lg border p-3">
+      <input type="hidden" name="leadId" value={lead.id} />
+      <FieldGroup className="gap-3">
+        <Field data-invalid={Boolean(agentError)}>
+          <FieldLabel htmlFor={`lead-assignee-${lead.id}`}>Assigned sales agent</FieldLabel>
+          <NativeSelect
+            id={`lead-assignee-${lead.id}`}
+            name="agentProfileId"
+            defaultValue={lead.assigned_to_profile_id ?? ''}
+            aria-invalid={Boolean(agentError)}
+            className="w-full"
+          >
+            <NativeSelectOption value="">Unassigned</NativeSelectOption>
+            {representatives.map((representative) => (
+              <NativeSelectOption key={representative.id} value={representative.id}>
+                {representative.full_name ?? representative.email ?? 'Unnamed sales agent'}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <FieldError>{agentError}</FieldError>
+        </Field>
+        {state.error && <FieldError>{state.error}</FieldError>}
+        <Button type="submit" size="sm" disabled={pending}>
+          {pending ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <UserRoundPlus data-icon="inline-start" />}
+          {pending ? 'Assigning' : 'Save assignment'}
+        </Button>
+      </FieldGroup>
+    </form>
+  )
+}
+
+const initialUpdateLeadWorkPlanState: UpdateLeadWorkPlanState = {}
+
+function LeadWorkPlanForm({ lead, onSuccess }: { lead: LeadWithRepresentative; onSuccess: () => void }) {
+  const [state, formAction, pending] = useActionState(updateLeadWorkPlan, initialUpdateLeadWorkPlanState)
+  const [editedFollowUp, setEditedFollowUp] = useState<string | null>(null)
+  const hydrated = useSyncExternalStore(emptySubscribe, () => true, () => false)
+  const nextFollowUpLocal = hydrated
+    ? editedFollowUp ?? toDateTimeLocalInput(lead.next_follow_up_at)
+    : ''
+  const selectedDate = nextFollowUpLocal ? new Date(nextFollowUpLocal) : new Date()
+  const timezoneOffsetMinutes = hydrated && Number.isFinite(selectedDate.getTime())
+    ? selectedDate.getTimezoneOffset()
+    : 0
+  const errors = state.fieldErrors ?? {}
+
+  useEffect(() => {
+    if (state.success) onSuccess()
+  }, [state.success, onSuccess])
+
+  return (
+    <form action={formAction} className="rounded-lg border p-3">
+      <input type="hidden" name="leadId" value={lead.id} />
+      <input type="hidden" name="timezoneOffsetMinutes" value={timezoneOffsetMinutes} />
+      <FieldGroup className="gap-3">
+        <Field data-invalid={Boolean(errors.priority)}>
+          <FieldLabel htmlFor={`lead-priority-${lead.id}`}>Priority</FieldLabel>
+          <NativeSelect
+            id={`lead-priority-${lead.id}`}
+            name="priority"
+            defaultValue={lead.priority}
+            aria-invalid={Boolean(errors.priority)}
+            className="w-full"
+          >
+            {Object.entries(priorityLabels).map(([value, label]) => (
+              <NativeSelectOption key={value} value={value}>{label}</NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <FieldError>{errors.priority?.[0]}</FieldError>
+        </Field>
+        <Field data-invalid={Boolean(errors.nextFollowUpAt)}>
+          <FieldLabel htmlFor={`lead-follow-up-${lead.id}`}>Next follow-up</FieldLabel>
+          <Input
+            id={`lead-follow-up-${lead.id}`}
+            name="nextFollowUpAt"
+            type="datetime-local"
+            step="300"
+            value={nextFollowUpLocal}
+            onChange={(event) => setEditedFollowUp(event.target.value)}
+            aria-invalid={Boolean(errors.nextFollowUpAt)}
+          />
+          <FieldError>{errors.nextFollowUpAt?.[0]}</FieldError>
+        </Field>
+        {state.error && <FieldError>{state.error}</FieldError>}
+        <Button type="submit" size="sm" disabled={pending || !hydrated}>
+          {pending ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <CalendarClock data-icon="inline-start" />}
+          {pending ? 'Saving' : 'Save work plan'}
+        </Button>
+      </FieldGroup>
+    </form>
+  )
+}
+
+const initialAddLeadNoteState: AddLeadNoteState = {}
+
+function LeadNoteForm({ lead, onSuccess }: { lead: LeadWithRepresentative; onSuccess: () => void }) {
+  const [state, formAction, pending] = useActionState(addLeadNote, initialAddLeadNoteState)
+  const noteError = state.fieldErrors?.note?.[0]
+
+  useEffect(() => {
+    if (state.success) onSuccess()
+  }, [state.success, onSuccess])
+
+  return (
+    <form action={formAction} className="rounded-lg border p-3">
+      <input type="hidden" name="leadId" value={lead.id} />
+      <FieldGroup className="gap-3">
+        <Field data-invalid={Boolean(noteError)}>
+          <FieldLabel htmlFor={`lead-note-${lead.id}`}>Add activity note</FieldLabel>
+          <Textarea
+            id={`lead-note-${lead.id}`}
+            name="note"
+            maxLength={2_000}
+            placeholder="Call outcome, customer request, or next step…"
+            aria-invalid={Boolean(noteError)}
+          />
+          <FieldError>{noteError}</FieldError>
+        </Field>
+        {state.error && <FieldError>{state.error}</FieldError>}
+        <Button type="submit" size="sm" disabled={pending}>
+          {pending ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <MessageSquare data-icon="inline-start" />}
+          {pending ? 'Adding' : 'Add note'}
+        </Button>
+      </FieldGroup>
+    </form>
   )
 }
 
@@ -417,6 +681,13 @@ function LeadStatusBadge({ status }: { status: LeadStatus }) {
   )
 }
 
+function LeadPriorityBadge({ priority }: { priority: LeadPriority }) {
+  if (priority === 'urgent') return <Badge variant="destructive">Urgent</Badge>
+  if (priority === 'high') return <Badge>High</Badge>
+  if (priority === 'low') return <Badge variant="outline">Low</Badge>
+  return <Badge variant="secondary">Normal</Badge>
+}
+
 function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
@@ -452,6 +723,29 @@ function ActivityItem({ icon: Icon, title, detail, date }: { icon: typeof Clock;
   )
 }
 
+function StoredActivityItem({ activity }: { activity: LeadActivity }) {
+  const icons = {
+    lead_created: UserRound,
+    assigned: UserRoundPlus,
+    reassigned: UserRoundPlus,
+    unassigned: UserRound,
+    status_changed: Clock,
+    work_plan_updated: CalendarClock,
+    note_added: MessageSquare,
+  }
+  const status = typeof activity.metadata.status === 'string' ? activity.metadata.status : null
+  const title = activity.activity_type === 'status_changed' && status
+    ? `Status changed to ${formatLabel(status)}`
+    : activity.activity_type === 'note_added'
+      ? 'Activity note'
+      : activity.description
+  const detail = activity.activity_type === 'note_added'
+    ? `${activity.actor_name ?? 'CRM user'}: ${activity.description}`
+    : activity.actor_name ?? 'System activity'
+
+  return <ActivityItem icon={icons[activity.activity_type]} title={title} detail={detail} date={activity.created_at} />
+}
+
 function formatReceived(createdAt: string) {
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 60_000))
   if (elapsedMinutes < 1) return 'Just now'
@@ -464,6 +758,15 @@ function formatReceived(createdAt: string) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+}
+
+function toDateTimeLocalInput(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return ''
+
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function formatLabel(value: string) {

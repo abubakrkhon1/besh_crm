@@ -323,11 +323,14 @@ export interface Database {
           preferred_network: string | null;
           estimated_monthly_gallons: number | null;
           account_type: LeadAccountType;
+          priority: LeadPriority;
           status: LeadStatus;
           source: string;
           notes: string | null;
           created_by_profile_id: string;
           assigned_to_profile_id: string | null;
+          assigned_at: string | null;
+          assigned_by_profile_id: string | null;
           sales_manager_profile_id: string | null;
           application_id: string | null;
           customer_id: string | null;
@@ -335,6 +338,7 @@ export interface Database {
           deal_lost_at: string | null;
           on_the_process_at: string | null;
           follow_up_at: string | null;
+          next_follow_up_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -349,11 +353,14 @@ export interface Database {
           preferred_network?: string | null;
           estimated_monthly_gallons?: number | null;
           account_type?: LeadAccountType;
+          priority?: LeadPriority;
           status?: LeadStatus;
           source?: string;
           notes?: string | null;
           created_by_profile_id: string;
           assigned_to_profile_id?: string | null;
+          assigned_at?: string | null;
+          assigned_by_profile_id?: string | null;
           sales_manager_profile_id?: string | null;
           application_id?: string | null;
           customer_id?: string | null;
@@ -361,10 +368,25 @@ export interface Database {
           deal_lost_at?: string | null;
           on_the_process_at?: string | null;
           follow_up_at?: string | null;
+          next_follow_up_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Omit<Database['public']['Tables']['leads']['Row'], 'id'>>;
+      };
+      lead_activities: {
+        Row: LeadActivity;
+        Insert: {
+          id?: string;
+          lead_id: string;
+          actor_profile_id?: string | null;
+          actor_name?: string | null;
+          activity_type: LeadActivityType;
+          description: string;
+          metadata?: Record<string, unknown>;
+          created_at?: string;
+        };
+        Update: never;
       };
     };
     Views: Record<string, never>;
@@ -427,5 +449,17 @@ export interface ApplicationDocument {
 }
 export type LeadStatus = 'new' | 'successful' | 'deal_lost' | 'on_the_process' | 'follow_up';
 export type LeadAccountType = 'prepaid_account' | 'deposit' | 'credit_line';
+export type LeadPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type LeadActivityType = 'lead_created' | 'assigned' | 'reassigned' | 'unassigned' | 'status_changed' | 'work_plan_updated' | 'note_added';
+export interface LeadActivity {
+  id: string;
+  lead_id: string;
+  actor_profile_id: string | null;
+  actor_name: string | null;
+  activity_type: LeadActivityType;
+  description: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
 export type Lead = Database['public']['Tables']['leads']['Row'];
 export type LeadInsert = Database['public']['Tables']['leads']['Insert'];

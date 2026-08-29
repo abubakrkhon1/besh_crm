@@ -1,8 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { BriefcaseBusiness, Download, RotateCcw, Search, Target, UserRoundCheck, Users } from 'lucide-react'
+import { AlertTriangle, BriefcaseBusiness, CalendarClock, CalendarDays, Download, RotateCcw, Search, Target, UserRoundCheck, Users } from 'lucide-react'
 import { Label, Pie, PieChart } from 'recharts'
 import type { LeadWithRepresentative } from '@/app/actions/leads'
 import { DashboardDateFilter } from '@/components/crm/DashboardDateFilter'
@@ -18,6 +18,7 @@ import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { LeadAccountType, LeadStatus, Profile } from '@/types/database.types'
 import { cn } from '@/lib/utils'
+import { getLeadFollowUpBucket, type LeadFollowUpBucket } from '@/lib/leads/follow-up'
 
 const statusLabels: Record<LeadStatus, string> = {
   new: 'New',
@@ -50,6 +51,10 @@ type LeadsWorkspaceProps = {
   selectedRepresentativeId?: string
   canFilterRepresentatives: boolean
   canAddLead: boolean
+  canAssignLeads: boolean
+  canManageWorkPlan: boolean
+  isSalesAgent: boolean
+  referenceTime: string
   openNewLead: boolean
   from: string
   to: string
@@ -61,6 +66,10 @@ export function LeadsWorkspace({
   selectedRepresentativeId,
   canFilterRepresentatives,
   canAddLead,
+  canAssignLeads,
+  canManageWorkPlan,
+  isSalesAgent,
+  referenceTime,
   openNewLead,
   from,
   to,
@@ -71,12 +80,30 @@ export function LeadsWorkspace({
   const [status, setStatus] = useState<'all' | LeadStatus>('all')
   const [source, setSource] = useState('all')
   const [accountType, setAccountType] = useState<'all' | LeadAccountType>('all')
+  const [followUp, setFollowUp] = useState<FollowUpFilter>('all')
+  const hydrated = useSyncExternalStore(emptySubscribe, () => true, () => false)
+  const now = hydrated ? Date.parse(referenceTime) : null
 
   const counts = useMemo(() => Object.fromEntries(
     statusOrder.map((leadStatus) => [leadStatus, leads.filter((lead) => lead.status === leadStatus).length]),
   ) as Record<LeadStatus, number>, [leads])
 
   const sources = useMemo(() => [...new Set(leads.map((lead) => lead.source))].sort(), [leads])
+  const followUpCounts = useMemo(() => {
+    const counts: Record<Exclude<FollowUpFilter, 'all'>, number> = {
+      overdue: 0,
+      today: 0,
+      upcoming: 0,
+      unscheduled: 0,
+    }
+    if (now === null) return counts
+
+    for (const lead of leads) {
+      const bucket = getLeadFollowUpBucket(lead, now)
+      if (bucket) counts[bucket] += 1
+    }
+    return counts
+  }, [leads, now])
   const filteredLeads = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return leads.filter((lead) => {
@@ -92,8 +119,9 @@ export function LeadsWorkspace({
         && (status === 'all' || lead.status === status)
         && (source === 'all' || lead.source === source)
         && (accountType === 'all' || lead.account_type === accountType)
+        && (followUp === 'all' || (now !== null && getLeadFollowUpBucket(lead, now) === followUp))
     })
-  }, [accountType, leads, query, source, status])
+  }, [accountType, followUp, leads, now, query, source, status])
 
   const selectRepresentative = (representativeId: string) => {
     const next = new URLSearchParams(searchParams)
@@ -107,10 +135,11 @@ export function LeadsWorkspace({
     setStatus('all')
     setSource('all')
     setAccountType('all')
+    setFollowUp('all')
   }
 
   const activePipeline = counts.on_the_process + counts.follow_up
-  const tableFilterKey = [query, status, source, accountType, selectedRepresentativeId ?? 'all', from, to].join('|')
+  const tableFilterKey = [query, status, source, accountType, followUp, selectedRepresentativeId ?? 'all', from, to].join('|')
 
   return (
     <div className="flex animate-fade-in flex-col gap-4 pb-12">
@@ -120,7 +149,7 @@ export function LeadsWorkspace({
           <p className="mt-1 text-sm text-muted-foreground">Track and manage leads across your sales team.</p>
         </div>
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-          <DashboardDateFilter from={from} to={to} path="/crm/leads" description="Choose when leads were received." />
+          {!isSalesAgent && <DashboardDateFilter from={from} to={to} path="/crm/leads" description="Choose when leads were received." />}
           <Button type="button" variant="outline" size="lg" onClick={() => exportLeads(filteredLeads)} disabled={!filteredLeads.length}>
             <Download data-icon="inline-start" />
             Export leads
@@ -130,12 +159,21 @@ export function LeadsWorkspace({
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_19rem]">
         <main className="flex min-w-0 flex-col gap-4">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <LeadMetricCard title="Total leads" value={leads.length} detail="Received in selected range" icon={<Users />} tone="blue" />
-            <LeadMetricCard title="New leads" value={counts.new} detail="Not worked yet" icon={<Target />} tone="violet" />
-            <LeadMetricCard title="Active pipeline" value={activePipeline} detail="In process or follow-up" icon={<BriefcaseBusiness />} tone="orange" />
-            <LeadMetricCard title="Successful" value={counts.successful} detail="Current successful status" icon={<UserRoundCheck />} tone="green" />
-          </div>
+          {isSalesAgent ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <LeadMetricCard title="My leads" value={leads.length} detail="Currently assigned to you" icon={<Users />} tone="blue" />
+              <LeadMetricCard title="Overdue" value={followUpCounts.overdue} detail="Follow-ups past due" icon={<AlertTriangle />} tone="red" />
+              <LeadMetricCard title="Due today" value={followUpCounts.today} detail="Remaining today" icon={<CalendarClock />} tone="orange" />
+              <LeadMetricCard title="Upcoming" value={followUpCounts.upcoming} detail="Scheduled after today" icon={<CalendarDays />} tone="green" />
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <LeadMetricCard title="Total leads" value={leads.length} detail="Received in selected range" icon={<Users />} tone="blue" />
+              <LeadMetricCard title="New leads" value={counts.new} detail="Not worked yet" icon={<Target />} tone="violet" />
+              <LeadMetricCard title="Active pipeline" value={activePipeline} detail="In process or follow-up" icon={<BriefcaseBusiness />} tone="orange" />
+              <LeadMetricCard title="Successful" value={counts.successful} detail="Current successful status" icon={<UserRoundCheck />} tone="green" />
+            </div>
+          )}
 
           {canFilterRepresentatives && representatives.length > 0 && (
             <Tabs value={selectedRepresentativeId ?? 'all'} onValueChange={selectRepresentative}>
@@ -153,7 +191,7 @@ export function LeadsWorkspace({
           <Card size="sm" className="overflow-hidden">
             <CardHeader>
               <CardTitle>Filter leads</CardTitle>
-              <CardDescription>Search and narrow the selected received-date cohort.</CardDescription>
+              <CardDescription>{isSalesAgent ? 'Search and organize your assigned lead workload.' : 'Search and narrow the selected received-date cohort.'}</CardDescription>
               <CardAction>
                 <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
                   <RotateCcw data-icon="inline-start" />
@@ -162,7 +200,12 @@ export function LeadsWorkspace({
               </CardAction>
             </CardHeader>
             <CardContent className="px-0 pb-0">
-              <div className="grid gap-3 px-4 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(14rem,1.5fr)_repeat(3,minmax(9rem,1fr))]">
+              <div className={cn(
+                'grid gap-3 px-4 pb-4 md:grid-cols-2',
+                isSalesAgent
+                  ? 'xl:grid-cols-[minmax(14rem,1.5fr)_repeat(4,minmax(9rem,1fr))]'
+                  : 'xl:grid-cols-[minmax(14rem,1.5fr)_repeat(3,minmax(9rem,1fr))]',
+              )}>
                 <div className="relative">
                   <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
                   <Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder="Search company, contact, email…" aria-label="Search leads" />
@@ -179,12 +222,24 @@ export function LeadsWorkspace({
                   <NativeSelectOption value="all">All account types</NativeSelectOption>
                   {Object.entries(accountTypeLabels).map(([value, label]) => <NativeSelectOption key={value} value={value}>{label}</NativeSelectOption>)}
                 </NativeSelect>
+                {isSalesAgent && (
+                  <NativeSelect className="w-full" value={followUp} onChange={(event) => setFollowUp(event.target.value as FollowUpFilter)} aria-label="Filter by follow-up schedule">
+                    <NativeSelectOption value="all">All follow-ups</NativeSelectOption>
+                    <NativeSelectOption value="overdue">Overdue ({followUpCounts.overdue})</NativeSelectOption>
+                    <NativeSelectOption value="today">Due today ({followUpCounts.today})</NativeSelectOption>
+                    <NativeSelectOption value="upcoming">Upcoming ({followUpCounts.upcoming})</NativeSelectOption>
+                    <NativeSelectOption value="unscheduled">Not scheduled ({followUpCounts.unscheduled})</NativeSelectOption>
+                  </NativeSelect>
+                )}
               </div>
               <LeadsTable
                 leads={filteredLeads}
                 showRepresentative={canFilterRepresentatives}
                 embedded
                 paginationKey={tableFilterKey}
+                representatives={representatives}
+                canAssignLeads={canAssignLeads}
+                canManageWorkPlan={canManageWorkPlan}
               />
             </CardContent>
           </Card>
@@ -201,13 +256,18 @@ export function LeadsWorkspace({
   )
 }
 
-type MetricTone = 'blue' | 'violet' | 'orange' | 'green'
+type FollowUpFilter = 'all' | LeadFollowUpBucket
+
+const emptySubscribe = () => () => {}
+
+type MetricTone = 'blue' | 'violet' | 'orange' | 'green' | 'red'
 
 const metricToneStyles: Record<MetricTone, string> = {
   blue: 'bg-chart-1/10 text-chart-1',
   violet: 'bg-chart-3/10 text-chart-3',
   orange: 'bg-chart-4/10 text-chart-4',
   green: 'bg-success/10 text-success',
+  red: 'bg-destructive/10 text-destructive',
 }
 
 function LeadMetricCard({ title, value, detail, icon, tone }: { title: string; value: number; detail: string; icon: React.ReactNode; tone: MetricTone }) {
@@ -333,7 +393,7 @@ function TopRepresentativesCard({ leads }: { leads: LeadWithRepresentative[] }) 
 }
 
 function exportLeads(leads: LeadWithRepresentative[]) {
-  const headers = ['Company', 'Contact', 'Email', 'Phone', 'Fleet', 'Account Type', 'Source', 'Status', 'Sales Agent', 'Received', 'Estimated Gallons']
+  const headers = ['Company', 'Contact', 'Email', 'Phone', 'Fleet', 'Account Type', 'Source', 'Priority', 'Status', 'Sales Agent', 'Next Follow-up', 'Received', 'Estimated Gallons']
   const rows = leads.map((lead) => [
     lead.company_name ?? '',
     `${lead.contact_first_name} ${lead.contact_last_name}`.trim(),
@@ -342,8 +402,10 @@ function exportLeads(leads: LeadWithRepresentative[]) {
     lead.fleet_size ?? '',
     accountTypeLabels[lead.account_type],
     formatLabel(lead.source),
+    formatLabel(lead.priority),
     statusLabels[lead.status],
     lead.representative?.full_name ?? lead.representative?.email ?? 'Unassigned',
+    lead.next_follow_up_at ?? '',
     lead.created_at,
     lead.estimated_monthly_gallons ?? '',
   ])

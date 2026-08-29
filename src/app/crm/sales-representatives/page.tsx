@@ -5,6 +5,8 @@ import {
   CircleAlert, ContactRound, Download, FileText, ListChecks, Target, TrendingUp, Trophy, UserPlus, Users,
 } from 'lucide-react'
 import { getLeads, getSalesAgents } from '@/app/actions/leads'
+import { getAvailableSalesAgents } from '@/app/actions/sales-agents'
+import { SalesAgentTeamAssignment } from '@/components/crm/SalesAgentTeamAssignment'
 import { SalesRepOwnershipChart, type OwnershipDatum } from '@/components/crm/SalesRepOwnershipChart'
 import { buildRepresentativePerformance, initials, SalesRepresentativesTable, type RepresentativePerformance } from '@/components/crm/SalesRepresentativesTable'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -21,8 +23,9 @@ export default async function SalesAgentsPage({ searchParams }: { searchParams: 
 
   const params = await searchParams
   const period = resolvePeriod(params)
-  const [representatives, leads, previousLeads] = await Promise.all([
+  const [representatives, availableAgents, leads, previousLeads] = await Promise.all([
     getSalesAgents(),
+    getAvailableSalesAgents(),
     getLeads(undefined, period.start.toISOString(), period.end.toISOString()),
     getLeads(undefined, period.previousStart.toISOString(), period.start.toISOString()),
   ])
@@ -48,16 +51,19 @@ export default async function SalesAgentsPage({ searchParams }: { searchParams: 
     <div className="flex animate-fade-in flex-col gap-4 pb-8">
       <section className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
         <p className="text-[13px] text-muted-foreground">Monitor sales agent productivity, lead performance, and conversions.</p>
-        <form className="flex flex-wrap items-center gap-2" action="/crm/sales-agents">
-          <label className="flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-xs shadow-sm">
-            <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />
-            <input type="date" name="from" defaultValue={period.from} className="bg-transparent outline-none" aria-label="Start date" />
-            <span className="text-muted-foreground">—</span>
-            <input type="date" name="to" defaultValue={period.to} className="bg-transparent outline-none" aria-label="End date" />
-          </label>
-          <button type="submit" className={buttonVariants({ variant: 'outline', size: 'sm' })}>Apply period</button>
-          <button type="button" className={buttonVariants({ size: 'sm' })} title="Export is coming soon"><Download data-icon="inline-start" />Export</button>
-        </form>
+        <div className="flex flex-wrap items-center gap-2">
+          <SalesAgentTeamAssignment agents={availableAgents} />
+          <form className="flex flex-wrap items-center gap-2" action="/crm/sales-agents">
+            <label className="flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-xs shadow-sm">
+              <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />
+              <input type="date" name="from" defaultValue={period.from} className="bg-transparent outline-none" aria-label="Start date" />
+              <span className="text-muted-foreground">—</span>
+              <input type="date" name="to" defaultValue={period.to} className="bg-transparent outline-none" aria-label="End date" />
+            </label>
+            <button type="submit" className={buttonVariants({ variant: 'outline', size: 'sm' })}>Apply period</button>
+            <button type="button" className={buttonVariants({ size: 'sm' })} title="Export is coming soon"><Download data-icon="inline-start" />Export</button>
+          </form>
+        </div>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createLeadSchema, updateLeadSchema } from './leads'
+import { addLeadNoteSchema, assignLeadSchema, createLeadSchema, updateLeadSchema, updateLeadWorkPlanSchema } from './leads'
 
 const validLead = {
   firstName: 'Ada',
@@ -92,5 +92,69 @@ describe('updateLeadSchema', () => {
 
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.flatten().fieldErrors.status).toContain('Select a lead status.')
+  })
+})
+
+describe('assignLeadSchema', () => {
+  const leadId = '3f71edbb-ffc9-4498-9ec2-a94fb8db9af8'
+  const agentProfileId = '3373624b-061a-4fdc-a4b3-81673d7c24bb'
+
+  it('accepts a lead and sales agent identifier', () => {
+    expect(assignLeadSchema.parse({ leadId, agentProfileId })).toEqual({ leadId, agentProfileId })
+  })
+
+  it('normalizes an empty sales agent to unassigned', () => {
+    expect(assignLeadSchema.parse({ leadId, agentProfileId: '  ' }).agentProfileId).toBeNull()
+  })
+
+  it('rejects malformed identifiers', () => {
+    expect(assignLeadSchema.safeParse({ leadId: 'lead-1', agentProfileId }).success).toBe(false)
+    expect(assignLeadSchema.safeParse({ leadId, agentProfileId: 'agent-1' }).success).toBe(false)
+  })
+})
+
+describe('updateLeadWorkPlanSchema', () => {
+  const leadId = '3f71edbb-ffc9-4498-9ec2-a94fb8db9af8'
+
+  it('normalizes a browser-local follow-up to UTC', () => {
+    expect(updateLeadWorkPlanSchema.parse({
+      leadId,
+      priority: 'high',
+      nextFollowUpAt: '2026-08-28T09:30',
+      timezoneOffsetMinutes: '240',
+    })).toEqual({
+      leadId,
+      priority: 'high',
+      nextFollowUpAt: '2026-08-28T13:30:00.000Z',
+    })
+  })
+
+  it('allows a follow-up to be cleared', () => {
+    expect(updateLeadWorkPlanSchema.parse({
+      leadId,
+      priority: 'normal',
+      nextFollowUpAt: '',
+      timezoneOffsetMinutes: '240',
+    }).nextFollowUpAt).toBeNull()
+  })
+
+  it('rejects invalid priorities, dates, and timezone offsets', () => {
+    expect(updateLeadWorkPlanSchema.safeParse({ leadId, priority: 'critical', nextFollowUpAt: '', timezoneOffsetMinutes: '240' }).success).toBe(false)
+    expect(updateLeadWorkPlanSchema.safeParse({ leadId, priority: 'high', nextFollowUpAt: '2026-02-30T09:30', timezoneOffsetMinutes: '240' }).success).toBe(false)
+    expect(updateLeadWorkPlanSchema.safeParse({ leadId, priority: 'high', nextFollowUpAt: '', timezoneOffsetMinutes: '900' }).success).toBe(false)
+  })
+})
+
+describe('addLeadNoteSchema', () => {
+  const leadId = '3f71edbb-ffc9-4498-9ec2-a94fb8db9af8'
+
+  it('trims a valid timeline note', () => {
+    expect(addLeadNoteSchema.parse({ leadId, note: '  Called and left a voicemail.  ' }).note)
+      .toBe('Called and left a voicemail.')
+  })
+
+  it('rejects empty and oversized notes', () => {
+    expect(addLeadNoteSchema.safeParse({ leadId, note: '  ' }).success).toBe(false)
+    expect(addLeadNoteSchema.safeParse({ leadId, note: 'x'.repeat(2_001) }).success).toBe(false)
   })
 })

@@ -13,7 +13,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: LeadsS
   const representatives = canFilterRepresentatives ? await getSalesAgents() : []
   const validRepresentativeId = representatives.some((representative) => representative.id === rep) ? rep : undefined
   const selectedRepresentative = canFilterRepresentatives ? validRepresentativeId : profile?.id
-  const leads = await getLeads(selectedRepresentative, range.rangeStart, range.rangeEnd)
+  const isSalesAgent = profile?.role === 'sales_agent'
+  const leads = await getLeads(
+    selectedRepresentative,
+    isSalesAgent ? undefined : range.rangeStart,
+    isSalesAgent ? undefined : range.rangeEnd,
+  )
 
   return (
     <LeadsWorkspace
@@ -22,6 +27,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: LeadsS
       selectedRepresentativeId={validRepresentativeId}
       canFilterRepresentatives={canFilterRepresentatives}
       canAddLead={profile?.role === 'sales_manager' || profile?.role === 'sales_agent'}
+      canAssignLeads={profile?.role === 'sales_manager'}
+      canManageWorkPlan={Boolean(profile)}
+      isSalesAgent={isSalesAgent}
+      referenceTime={new Date().toISOString()}
       openNewLead={getStringParam(params.new) === '1'}
       from={range.from}
       to={range.to}

@@ -3,12 +3,18 @@
 import { revalidatePath } from 'next/cache'
 import { createClient, CRM_ROLES, requireRoles } from '@/lib/supabase/server'
 import {
+  addLeadNoteSchema,
+  AddLeadNoteField,
+  assignLeadSchema,
+  AssignLeadField,
   createLeadSchema,
   CreateLeadField,
+  updateLeadWorkPlanSchema,
+  UpdateLeadWorkPlanField,
   updateLeadSchema,
   UpdateLeadField,
 } from '@/lib/validation/leads'
-import { Lead, Profile } from '@/types/database.types'
+import { Lead, LeadActivity, Profile } from '@/types/database.types'
 
 export type LeadWithRepresentative = Lead & {
   representative?: Pick<Profile, 'id' | 'full_name' | 'email'> | null
@@ -42,16 +48,19 @@ export async function getLeads(
 }
 
 export async function getSalesAgents(): Promise<Profile[]> {
-  const { error } = await requireRoles(['owner', 'admin', 'general_manager', 'sales_manager'])
-  if (error) return []
+  const { profile, error } = await requireRoles(['owner', 'admin', 'general_manager', 'sales_manager'])
+  if (error || !profile) return []
 
   const supabase = await createClient()
-  const { data, error: queryError } = await supabase
+  let query = supabase
     .from('profiles')
     .select('*')
     .eq('role', 'sales_agent')
     .eq('is_active', true)
-    .order('full_name')
+
+  if (profile.role === 'sales_manager') query = query.eq('manager_profile_id', profile.id)
+
+  const { data, error: queryError } = await query.order('full_name')
 
   if (queryError) {
     console.error('getSalesAgents:', queryError)
@@ -59,6 +68,175 @@ export async function getSalesAgents(): Promise<Profile[]> {
   }
 
   return data as Profile[]
+}
+
+export type AssignLeadState = {
+  error?: string
+  success?: boolean
+  fieldErrors?: Partial<Record<AssignLeadField, string[]>>
+}
+
+export async function assignLead(_previousState: AssignLeadState, formData: FormData): Promise<AssignLeadState> {
+  const { profile, error } = await requireRoles(['sales_manager'])
+  if (error || !profile) return { error: 'You do not have permission to assign leads.' }
+
+  const parsed = assignLeadSchema.safeParse({
+    leadId: String(formData.get('leadId') ?? ''),
+    agentProfileId: String(formData.get('agentProfileId') ?? ''),
+  })
+
+  if (!parsed.success) {
+    return {
+      error: 'Select a valid sales agent and try again.',
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    }
+  }
+
+  const supabase = await createClient()
+  const { leadId, agentProfileId } = parsed.data
+
+  if (agentProfileId) {
+    const { data: agent, error: agentError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', agentProfileId)
+      .eq('role', 'sales_agent')
+      .eq('manager_profile_id', profile.id)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (agentError || !agent) {
+      return { error: 'That sales agent is not an active member of your team.' }
+    }
+  }
+
+  const { data: lead, error: updateError } = await supabase
+    .from('leads')
+    .update({ assigned_to_profile_id: agentProfileId })
+    .eq('id', leadId)
+    .eq('sales_manager_profile_id', profile.id)
+    .select('id')
+    .maybeSingle()
+
+  if (updateError || !lead) {
+    console.error('assignLead:', updateError)
+    return { error: 'The lead could not be assigned. Refresh the page and try again.' }
+  }
+
+  revalidatePath('/crm/leads')
+  revalidatePath('/crm/dashboard')
+  revalidatePath('/crm/sales-agents')
+  return { success: true }
+}
+
+export type UpdateLeadWorkPlanState = {
+  error?: string
+  success?: boolean
+  fieldErrors?: Partial<Record<UpdateLeadWorkPlanField, string[]>>
+}
+
+export async function updateLeadWorkPlan(
+  _previousState: UpdateLeadWorkPlanState,
+  formData: FormData,
+): Promise<UpdateLeadWorkPlanState> {
+  const { profile, error } = await requireRoles(CRM_ROLES)
+  if (error || !profile) return { error: 'You do not have permission to update this lead.' }
+
+  const parsed = updateLeadWorkPlanSchema.safeParse({
+    leadId: String(formData.get('leadId') ?? ''),
+    priority: String(formData.get('priority') ?? ''),
+    nextFollowUpAt: String(formData.get('nextFollowUpAt') ?? ''),
+    timezoneOffsetMinutes: String(formData.get('timezoneOffsetMinutes') ?? ''),
+  })
+
+  if (!parsed.success) {
+    return {
+      error: 'Review the priority and follow-up time.',
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    }
+  }
+
+  const { data: lead, error: updateError } = await (await createClient())
+    .from('leads')
+    .update({
+      priority: parsed.data.priority,
+      next_follow_up_at: parsed.data.nextFollowUpAt,
+    })
+    .eq('id', parsed.data.leadId)
+    .select('id')
+    .maybeSingle()
+
+  if (updateError || !lead) {
+    console.error('updateLeadWorkPlan:', updateError)
+    return { error: 'The lead work plan could not be updated. Refresh the page and try again.' }
+  }
+
+  revalidatePath('/crm/leads')
+  revalidatePath('/crm/dashboard')
+  revalidatePath('/crm/sales-agents')
+  return { success: true }
+}
+
+export async function getLeadActivities(leadId: string): Promise<LeadActivity[]> {
+  const { error } = await requireRoles(CRM_ROLES)
+  if (error || !zUuid(leadId)) return []
+
+  const { data, error: queryError } = await (await createClient())
+    .from('lead_activities')
+    .select('*')
+    .eq('lead_id', leadId)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (queryError) {
+    console.error('getLeadActivities:', queryError)
+    return []
+  }
+
+  return data as LeadActivity[]
+}
+
+export type AddLeadNoteState = {
+  error?: string
+  success?: boolean
+  fieldErrors?: Partial<Record<AddLeadNoteField, string[]>>
+}
+
+export async function addLeadNote(_previousState: AddLeadNoteState, formData: FormData): Promise<AddLeadNoteState> {
+  const { profile, error } = await requireRoles(CRM_ROLES)
+  if (error || !profile) return { error: 'You do not have permission to add a note to this lead.' }
+
+  const parsed = addLeadNoteSchema.safeParse({
+    leadId: String(formData.get('leadId') ?? ''),
+    note: String(formData.get('note') ?? ''),
+  })
+
+  if (!parsed.success) {
+    return {
+      error: 'Enter a valid note.',
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    }
+  }
+
+  const { error: insertError } = await (await createClient()).from('lead_activities').insert({
+    lead_id: parsed.data.leadId,
+    actor_profile_id: profile.id,
+    activity_type: 'note_added',
+    description: parsed.data.note,
+  })
+
+  if (insertError) {
+    console.error('addLeadNote:', insertError)
+    return { error: 'The note could not be added. Refresh the page and try again.' }
+  }
+
+  revalidatePath('/crm/leads')
+  revalidatePath('/crm/dashboard')
+  return { success: true }
+}
+
+function zUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
 export type CreateLeadState = {

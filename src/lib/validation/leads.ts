@@ -1,7 +1,9 @@
 import { z } from 'zod'
+import { isValidLocalDateTime, localDateTimeToIso } from '../date-time'
 
 export const leadAccountTypes = ['prepaid_account', 'deposit', 'credit_line'] as const
 export const leadStatuses = ['new', 'successful', 'deal_lost', 'on_the_process', 'follow_up'] as const
+export const leadPriorities = ['low', 'normal', 'high', 'urgent'] as const
 
 const optionalText = (label: string, maxLength: number) =>
   z.string()
@@ -57,3 +59,38 @@ export const updateLeadSchema = createLeadSchema.safeExtend({
 })
 
 export type UpdateLeadField = keyof z.input<typeof updateLeadSchema>
+
+export const assignLeadSchema = z.object({
+  leadId: z.string().uuid('Invalid lead.'),
+  agentProfileId: z.string()
+    .transform((value) => value.trim() || null)
+    .pipe(z.string().uuid('Select a valid sales agent.').nullable()),
+})
+
+export type AssignLeadField = keyof z.input<typeof assignLeadSchema>
+
+export const updateLeadWorkPlanSchema = z.object({
+  leadId: z.string().uuid('Invalid lead.'),
+  priority: z.enum(leadPriorities, { error: 'Select a lead priority.' }),
+  nextFollowUpAt: z.string()
+    .trim()
+    .refine((value) => value === '' || isValidLocalDateTime(value), 'Enter a valid follow-up date and time.'),
+  timezoneOffsetMinutes: z.string()
+    .trim()
+    .regex(/^-?\d+$/, 'Invalid timezone offset.')
+    .transform(Number)
+    .refine((value) => Number.isInteger(value) && Math.abs(value) <= 840, 'Invalid timezone offset.'),
+}).transform((workPlan) => ({
+  leadId: workPlan.leadId,
+  priority: workPlan.priority,
+  nextFollowUpAt: localDateTimeToIso(workPlan.nextFollowUpAt, workPlan.timezoneOffsetMinutes)!,
+}))
+
+export type UpdateLeadWorkPlanField = keyof z.input<typeof updateLeadWorkPlanSchema>
+
+export const addLeadNoteSchema = z.object({
+  leadId: z.string().uuid('Invalid lead.'),
+  note: z.string().trim().min(1, 'Enter a note.').max(2_000, 'Note must be 2,000 characters or fewer.'),
+})
+
+export type AddLeadNoteField = keyof z.input<typeof addLeadNoteSchema>
