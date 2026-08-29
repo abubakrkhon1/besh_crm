@@ -12,6 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LocalDateTime } from '@/components/ui/local-date-time'
+import { getWexFreshness, type WexFreshnessStatus, type WexSyncResource } from '@/lib/integrations/wex/freshness'
 import { fuelCardQuerySchema } from '@/lib/integrations/wex/schemas'
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,11 @@ type FuelCardRow = {
 }
 
 type SummaryCard = FuelCardRow & { customers: FuelCardRow['customers'] }
+
+type WexSyncStateRow = {
+  resource: WexSyncResource
+  last_succeeded_at: string | null
+}
 
 export default async function FuelCardsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = fuelCardQuerySchema.parse(await searchParams)
@@ -61,10 +67,10 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   cardQuery = cardQuery.order(params.sort, { ascending: params.dir === 'asc' })
   if (params.sort === 'status') cardQuery = cardQuery.order('last_synced_at', { ascending: false })
 
-  const [cardsResult, summaryResult, syncResult, failedRunsResult, transactionStats, activityResult, alertsResult] = await Promise.all([
+  const [cardsResult, summaryResult, syncStateResult, failedRunsResult, transactionStats, activityResult, alertsResult] = await Promise.all([
     cardQuery.range(offset, offset + params.pageSize - 1),
     db.from('fuel_cards').select('id,card_last4,customer_id,driver_name,external_driver_id,unit_number,status,policy_number,is_overridden,last_synced_at,customers(company_name,contact_name)', { count: 'exact' }).eq('provider', 'wex_efs').range(0, 9_999),
-    db.from('fuel_card_sync_runs').select('completed_at,cards_received,cards_unmatched').eq('provider', 'wex_efs').eq('status', 'succeeded').order('completed_at', { ascending: false }).limit(1).maybeSingle(),
+    db.from('wex_sync_state').select('resource,last_succeeded_at').eq('provider', 'wex_efs').in('resource', ['transactions', 'account', 'reconciliation']),
     db.from('fuel_card_sync_runs').select('id,started_at,completed_at,error_message').eq('provider', 'wex_efs').eq('status', 'failed').order('started_at', { ascending: false }).limit(3),
     getGeneralManagerDashboard(range.rangeStart, range.rangeEnd),
     db.from('fuel_transactions').select('id,transaction_date,amount,merchant_name,merchant_state,provider_transaction_type,customers(id,company_name,contact_name),fuel_cards(id,card_last4,driver_name)').eq('provider', 'wex_efs').eq('status', 'posted').gte('transaction_date', range.rangeStart).lt('transaction_date', range.rangeEnd).order('transaction_date', { ascending: false }).limit(25),
@@ -84,8 +90,14 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   const unmatchedCards = summaryCards.filter((card) => !card.customer_id)
   const missingDrivers = summaryCards.filter((card) => !card.external_driver_id && !card.driver_name)
   const overriddenCards = summaryCards.filter((card) => card.is_overridden)
-  const sync = syncResult.data
-  const syncHealthy = Boolean(sync?.completed_at && Date.parse(sync.completed_at) >= Date.parse(staleCutoff))
+  const syncState = new Map(
+    ((syncStateResult.data ?? []) as WexSyncStateRow[]).map((state) => [state.resource, state.last_succeeded_at]),
+  )
+  const freshnessRows = [
+    buildFreshnessRow('transactions', 'Transactions', 'Every 5 minutes', syncState.get('transactions')),
+    buildFreshnessRow('account', 'Cards & accounts', 'Every 30 minutes', syncState.get('account')),
+    buildFreshnessRow('reconciliation', 'Reconciliation', 'Daily at 2:17 UTC', syncState.get('reconciliation')),
+  ]
   const activity = (activityResult.data ?? []) as Array<Record<string, unknown>>
   const syncAlerts = (alertsResult.data ?? []) as Array<{ id: string, severity: 'warning' | 'critical', title: string, message: string, updated_at: string }>
 
@@ -126,20 +138,6 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
             <FuelCardMetric title="Period spend" value={formatCurrency(transactionStats?.spending)} detail="Selected date range" icon={<DollarSign />} tone="green" />
             <FuelCardMetric title="Period savings" value={formatCurrency(transactionStats?.savings)} detail="Selected date range" icon={<Tag />} tone="violet" />
           </div>
-
-          <Card size="sm">
-            <CardContent className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-center gap-2 text-sm">
-                <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden="true" />
-                <span className="font-semibold">Last successful sync:</span>
-                <span className="truncate text-muted-foreground">{sync?.completed_at ? <LocalDateTime value={sync.completed_at} /> : 'No successful sync yet'}</span>
-                {sync && <span className="hidden text-muted-foreground md:inline">· {sync.cards_received.toLocaleString()} received · {sync.cards_unmatched.toLocaleString()} unmatched</span>}
-              </div>
-              <Badge variant="outline" className={syncHealthy ? 'border-status-success-foreground/15 bg-status-success text-status-success-foreground' : 'border-status-follow-up-foreground/15 bg-status-follow-up text-status-follow-up-foreground'}>
-                {syncHealthy ? 'Healthy' : 'Needs attention'}
-              </Badge>
-            </CardContent>
-          </Card>
 
           <Card className="overflow-hidden py-0">
             <CardHeader className="sr-only"><CardTitle>Fuel card inventory</CardTitle></CardHeader>
@@ -251,6 +249,37 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
           </Card>
         </aside>
       </div>
+
+      <Card className="overflow-hidden py-0">
+        <CardHeader className="border-b px-4 py-3">
+          <CardTitle>WEX data freshness</CardTitle>
+          <CardDescription>Each data stream is evaluated against its own synchronization schedule.</CardDescription>
+        </CardHeader>
+        <CardContent className="overflow-x-auto px-0 pb-0">
+          <Table className="min-w-[640px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Data</TableHead>
+                <TableHead>Expected schedule</TableHead>
+                <TableHead>Last successful update</TableHead>
+                <TableHead className="text-right">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {freshnessRows.map((row) => (
+                <TableRow key={row.resource}>
+                  <TableCell className="font-medium">{row.label}</TableCell>
+                  <TableCell className="text-muted-foreground">{row.schedule}</TableCell>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">
+                    {row.lastSucceededAt ? <LocalDateTime value={row.lastSucceededAt} /> : 'No successful update yet'}
+                  </TableCell>
+                  <TableCell className="text-right"><FreshnessBadge status={row.status} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -269,6 +298,37 @@ function FuelCardMetric({ title, value, detail, icon, tone }: { title: string; v
     <CardHeader className="grid-cols-[minmax(0,1fr)_auto] px-4"><CardTitle className="truncate text-[13px]">{title}</CardTitle><CardAction className={cn('flex size-9 items-center justify-center rounded-lg [&_svg]:size-5', metricToneStyles[tone])}>{icon}</CardAction></CardHeader>
     <CardContent className="px-4"><p className="truncate text-2xl font-bold tracking-tight tabular-nums">{value}</p><p className="mt-1.5 truncate text-xs text-muted-foreground">{detail}</p></CardContent>
   </Card>
+}
+
+function buildFreshnessRow(
+  resource: WexSyncResource,
+  label: string,
+  schedule: string,
+  lastSucceededAt: string | null | undefined,
+) {
+  return {
+    resource,
+    label,
+    schedule,
+    lastSucceededAt: lastSucceededAt ?? null,
+    status: getWexFreshness(resource, lastSucceededAt).status,
+  }
+}
+
+function FreshnessBadge({ status }: { status: WexFreshnessStatus }) {
+  if (status === 'current') {
+    return (
+      <Badge variant="outline" className="border-status-success-foreground/15 bg-status-success text-status-success-foreground">
+        <CheckCircle2 /> Current
+      </Badge>
+    )
+  }
+
+  return (
+    <Badge variant="outline" className="border-status-follow-up-foreground/15 bg-status-follow-up text-status-follow-up-foreground">
+      <AlertTriangle /> {status === 'stale' ? 'Stale' : 'No data'}
+    </Badge>
+  )
 }
 
 function CardStatusBadge({ status }: { status: string }) {
