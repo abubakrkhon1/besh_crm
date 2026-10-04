@@ -3,7 +3,7 @@ import 'server-only'
 import { XMLParser } from 'fast-xml-parser'
 import { WexError } from './errors'
 import { normalizedWexCardSchema, normalizedWexContractSchema, normalizedWexCreditLimitsSchema, normalizedWexTransactionSchema } from './schemas'
-import type { WexCard, WexCarrier, WexContract, WexCreditLimits, WexTransaction } from './types'
+import type { WexAllowedOrderType, WexCard, WexCardOrder, WexCardRefreshingLimits, WexCardV2, WexCarrier, WexContract, WexCreditLimits, WexReplacementCardOrder, WexRequestStatus, WexTransaction } from './types'
 
 const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, trimValues: true })
 export const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]!))
@@ -49,6 +49,23 @@ const nullableNumberOf = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 const valuesOf = (value: unknown): any[] => value == null ? [] : Array.isArray(value) ? value : [value]
+const booleanOf = (value: unknown) => String(value).toLowerCase() === 'true' || String(value).toUpperCase() === 'Y'
+const safeProviderMessage = (value: string) => value
+  .replace(/https?:\/\/[^\s<]+/gi, '[redacted-url]')
+  .replace(/\b\d{6,}\b/g, '[redacted]')
+  .replace(/\b[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
+  .slice(0, 500)
+
+function requestStatusOf(value: any): WexRequestStatus {
+  const status = {
+    errorCode: numberOf(value?.errorCode, -1),
+    description: valueOf(value?.description) ? safeProviderMessage(String(value.description)) : null,
+  }
+  if (status.errorCode !== 0) {
+    throw new WexError(status.description || `WEX rejected the request with code ${status.errorCode}.`, 'provider_rejected')
+  }
+  return status
+}
 
 function parseTransactionTax(row: any) {
   return {
@@ -158,4 +175,126 @@ export function parseCreditLimits(xml: string): WexCreditLimits {
     dailyAvailable: numberOf(result.dailyAvailable), totalAvailable: numberOf(result.totalAvailable),
     maxMoneyCode: numberOf(result.maxMoneyCode), unitOfMeasure: valueOf(result.uom),
   })
+}
+
+export function parseCardV2(xml: string): WexCardV2 {
+  const result = bodyOf(xml)?.getCardv2Response?.result
+  const cardNumber = valueOf(result?.cardNumber)
+  const header = result?.header
+  if (!cardNumber || !header) throw new WexError('WEX returned incomplete card details.', 'validation')
+  return {
+    cardNumber,
+    header: {
+      companyXRef: valueOf(header.companyXRef), handEnter: valueOf(header.handEnter),
+      infoSource: valueOf(header.infoSource), limitSource: valueOf(header.limitSource),
+      locationOverride: numberOf(header.locationOverride), locationSource: valueOf(header.locationSource),
+      overrideAllLocations: booleanOf(header.overrideAllLocations), originalStatus: valueOf(header.originalStatus),
+      payrollStatus: valueOf(header.payrollStatus), override: numberOf(header.override),
+      policyNumber: numberOf(header.policyNumber), status: valueOf(header.status), timeSource: valueOf(header.timeSource),
+      lastUsedDate: valueOf(header.lastUsedDate), lastTransaction: nullableNumberOf(header.lastTransaction),
+      payrollUse: valueOf(header.payrollUse), payrollAtm: valueOf(header.payrollAtm),
+      payrollChk: valueOf(header.payrollChk), payrollAch: valueOf(header.payrollAch),
+      payrollWire: valueOf(header.payrollWire), payrollDebit: valueOf(header.payrollDebit),
+    },
+    infos: valuesOf(result.infos).map((info) => ({
+      infoId: valueOf(info.infoId), lengthCheck: booleanOf(info.lengthCheck), matchValue: valueOf(info.matchValue),
+      maximum: numberOf(info.maximum), minimum: numberOf(info.minimum), reportValue: valueOf(info.reportValue),
+      numericMatchValue: valueOf(info.numericMatchValue), validationType: valueOf(info.validationType), value: numberOf(info.value),
+    })),
+    limits: valuesOf(result.limits).map((limit) => ({
+      hours: numberOf(limit.hours), limit: numberOf(limit.limit), limitId: valueOf(limit.limitId),
+      minHours: numberOf(limit.minHours), autoRollMap: numberOf(limit.autoRollMap), autoRollMax: numberOf(limit.autoRollMax),
+    })),
+    locationGroups: valuesOf(result.locationGroups).map((value) => numberOf(value)),
+    locations: valuesOf(result.locations).map((value) => numberOf(value)),
+    timeRestrictions: valuesOf(result.timeRestrictions).map((restriction) => ({
+      beginTime: valueOf(restriction.beginTime), day: numberOf(restriction.day), endTime: valueOf(restriction.endTime),
+    })),
+  }
+}
+
+export function parseCardRefreshingLimits(xml: string): WexCardRefreshingLimits {
+  const result = bodyOf(xml)?.getCardRefreshingLimitsResponse?.cardRefreshingLimitsData
+  if (!result) throw new WexError('WEX returned no card-limit information.', 'validation')
+  return {
+    refreshingLimitSource: valueOf(result.refreshingLimitSource) ?? '',
+    dayCountLimit: nullableNumberOf(result.dayCntLimit), dayAmountLimit: nullableNumberOf(result.dayAmtLimit),
+    weekCountLimit: nullableNumberOf(result.weekCntLimit), weekAmountLimit: nullableNumberOf(result.weekAmtLimit),
+    monthCountLimit: nullableNumberOf(result.monCntLimit), monthAmountLimit: nullableNumberOf(result.monAmtLimit),
+  }
+}
+
+export function parseAllowedOrderTypes(xml: string): WexAllowedOrderType[] {
+  const response = bodyOf(xml)?.getAllowedOrderTypesResponse?.response
+  return valuesOf(response?.value).map((value) => ({
+    orderType: numberOf(value.orderType), orderDescription: valueOf(value.orderDesc) ?? 'Card order',
+    defaultCardStyle: numberOf(value.defCardStyle), defaultCardStyleDescription: valueOf(value.defCardStyleDesc) ?? 'Default',
+    defaultPolicy: numberOf(value.defPolicy),
+  }))
+}
+
+export function parseMutationResponse(xml: string, operation: 'setCardRefreshingLimits' | 'createAndSubmitOrder' | 'reissueDamagedCard' | 'replaceLostOrStolenCard') {
+  const response = bodyOf(xml)?.[`${operation}Response`]
+  if (!response) throw new WexError('WEX returned an incomplete operation response.', 'validation')
+  const status = requestStatusOf(response.requestStatus)
+  return {
+    ...status,
+    orderId: operation === 'setCardRefreshingLimits' ? null : valueOf(response.orderId),
+  }
+}
+
+const xmlElement = (name: string, value: unknown) => value == null
+  ? `<${name} xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>`
+  : `<${name}>${escapeXml(String(value))}</${name}>`
+
+export function serializeCardV2(card: WexCardV2) {
+  const header = Object.entries({
+    companyXRef: card.header.companyXRef, handEnter: card.header.handEnter, infoSource: card.header.infoSource,
+    limitSource: card.header.limitSource, locationOverride: card.header.locationOverride,
+    locationSource: card.header.locationSource, overrideAllLocations: card.header.overrideAllLocations,
+    originalStatus: card.header.originalStatus, payrollStatus: card.header.payrollStatus, override: card.header.override,
+    policyNumber: card.header.policyNumber, status: card.header.status, timeSource: card.header.timeSource,
+    lastUsedDate: card.header.lastUsedDate, lastTransaction: card.header.lastTransaction, payrollUse: card.header.payrollUse,
+    payrollAtm: card.header.payrollAtm, payrollChk: card.header.payrollChk, payrollAch: card.header.payrollAch,
+    payrollWire: card.header.payrollWire, payrollDebit: card.header.payrollDebit,
+  }).map(([name, value]) => xmlElement(name, value)).join('')
+  const infos = card.infos.map((info) => `<infos>${Object.entries(info).map(([name, value]) => xmlElement(name, value)).join('')}</infos>`).join('')
+  const limits = card.limits.map((limit) => `<limits>${Object.entries(limit).map(([name, value]) => xmlElement(name, value)).join('')}</limits>`).join('')
+  const locationGroups = card.locationGroups.map((value) => xmlElement('locationGroups', value)).join('')
+  const locations = card.locations.map((value) => xmlElement('locations', value)).join('')
+  const restrictions = card.timeRestrictions.map((restriction) => `<timeRestrictions>${Object.entries(restriction).map(([name, value]) => xmlElement(name, value)).join('')}</timeRestrictions>`).join('')
+  return `${xmlElement('cardNumber', card.cardNumber)}<header>${header}</header>${infos}${limits}${locationGroups}${locations}${restrictions}`
+}
+
+export function serializeRefreshingLimits(limits: WexCardRefreshingLimits) {
+  return [
+    xmlElement('refreshingLimitSource', limits.refreshingLimitSource), xmlElement('dayCntLimit', limits.dayCountLimit),
+    xmlElement('dayAmtLimit', limits.dayAmountLimit), xmlElement('weekCntLimit', limits.weekCountLimit),
+    xmlElement('weekAmtLimit', limits.weekAmountLimit), xmlElement('monCntLimit', limits.monthCountLimit),
+    xmlElement('monAmtLimit', limits.monthAmountLimit),
+  ].join('')
+}
+
+export function serializeCardOrder(order: WexCardOrder) {
+  return [
+    xmlElement('policyNumber', order.policyNumber), xmlElement('orderType', order.orderType),
+    xmlElement('cardStyle', order.cardStyle), xmlElement('orderQty', 1), xmlElement('embossedName', order.embossedName),
+    xmlElement('shipToFirst', order.shipToFirst), xmlElement('shipToLast', order.shipToLast),
+    xmlElement('shipToAddress1', order.shipToAddress1), xmlElement('shipToAddress2', order.shipToAddress2),
+    xmlElement('shipToCity', order.shipToCity), xmlElement('shipToState', order.shipToState),
+    xmlElement('shipToZip', order.shipToZip), xmlElement('shipToCountry', order.shipToCountry),
+    xmlElement('shippingMethod', order.shippingMethod), xmlElement('rushProcessing', order.rushProcessing),
+    xmlElement('cardCarrier', order.cardCarrier),
+  ].join('')
+}
+
+export function serializeReplacementCardOrder(order: WexReplacementCardOrder) {
+  return [
+    xmlElement('cardNumber', order.cardNumber), xmlElement('shipToFirst', order.shipToFirst),
+    xmlElement('shipToLast', order.shipToLast), xmlElement('shipToAddress1', order.shipToAddress1),
+    xmlElement('shipToAddress2', order.shipToAddress2), xmlElement('shipToCity', order.shipToCity),
+    xmlElement('shipToState', order.shipToState), xmlElement('shipToZip', order.shipToZip),
+    xmlElement('shipToCountry', order.shipToCountry), xmlElement('shippingMethod', order.shippingMethod),
+    xmlElement('rushProcessing', order.rushProcessing), xmlElement('reason', order.reason),
+  ].join('')
 }

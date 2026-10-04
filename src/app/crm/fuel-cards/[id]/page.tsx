@@ -1,17 +1,18 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, Building2, CheckCircle2, CreditCard, Mail, Phone, RefreshCw, ShieldCheck, Snowflake, Truck, UserRound } from 'lucide-react'
+import { ArrowLeft, Building2, CheckCircle2, CreditCard, History, Mail, Phone, RefreshCw, ShieldCheck, Truck, UserRound } from 'lucide-react'
 import { CustomerAssignment } from '@/components/crm/CustomerAssignment'
+import { FuelCardLimitsDialog, FuelCardStatusControl, ReplaceFuelCardDialog } from '@/components/crm/FuelCardManagementControls'
 import { FuelCardSyncButton } from '@/components/crm/FuelCardControls'
 import { PaginatedTable } from '@/components/crm/ui/PaginatedTable'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LocalDateTime } from '@/components/ui/local-date-time'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, getCurrentProfile } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
 type RelatedCustomer = { id: string; company_name: string | null; contact_name: string | null }
@@ -20,13 +21,15 @@ type RelatedDriver = { id: string; first_name: string; last_name: string; email:
 export default async function FuelCardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const db = await createClient()
-  const [{ data: card }, { data: customers }, { data: mapping }, { data: transactions }, { data: restriction }, { data: sync }] = await Promise.all([
-    db.from('fuel_cards').select('id,card_last4,provider,customer_id,driver_id,status,driver_name,external_driver_id,unit_number,policy_number,payroll_status,payroll_use,is_overridden,override_code,gps_id,vin,zone_id,last_synced_at,daily_limit,weekly_limit,monthly_limit,gallon_limit,customers(id,company_name,contact_name),drivers(id,first_name,last_name,email,phone,license_number,status,created_at)').eq('id', id).single(),
+  const [{ data: card }, { data: customers }, { data: mapping }, { data: transactions }, { data: restriction }, { data: sync }, operationsResult, profile] = await Promise.all([
+    db.from('fuel_cards').select('id,card_last4,provider,customer_id,driver_id,status,driver_name,external_driver_id,unit_number,policy_number,payroll_status,payroll_use,is_overridden,override_code,gps_id,vin,zone_id,last_synced_at,daily_limit,weekly_limit,monthly_limit,gallon_limit,refreshing_limit_source,daily_transaction_limit,weekly_transaction_limit,monthly_transaction_limit,customers(id,company_name,contact_name),drivers(id,first_name,last_name,email,phone,license_number,status,created_at)').eq('id', id).single(),
     db.from('customers').select('id,company_name,contact_name').order('company_name'),
     db.from('fuel_card_customer_mappings').select('match_method,match_confidence,is_confirmed,confirmed_at').eq('fuel_card_id', id).maybeSingle(),
     db.from('fuel_transactions').select('id,transaction_date,merchant_name,merchant_address,merchant_state,gallons,amount,savings,status,provider_transaction_type').eq('fuel_card_id', id).order('transaction_date', { ascending: false }).limit(25),
     db.from('fuel_card_restrictions').select('fuel_only,allow_def,allow_maintenance,allowed_states,blocked_states,allowed_merchants,blocked_merchants,start_time,end_time').eq('fuel_card_id', id).maybeSingle(),
     db.from('fuel_card_sync_runs').select('completed_at,cards_received,cards_unmatched').eq('provider', 'wex_efs').eq('status', 'succeeded').order('completed_at', { ascending: false }).limit(1).maybeSingle(),
+    db.from('fuel_card_operations').select('id,operation_type,status,provider_reference,error_message,requested_at,completed_at').eq('fuel_card_id', id).order('requested_at', { ascending: false }).limit(20),
+    getCurrentProfile(),
   ])
 
   if (!card) notFound()
@@ -34,13 +37,14 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
   const customer = oneRelation(card.customers) as RelatedCustomer | null
   const driver = oneRelation(card.drivers) as RelatedDriver | null
   const customerOptions = (customers ?? []).map((option) => ({ id: option.id, name: option.company_name ?? option.contact_name ?? 'Unnamed customer' }))
-  const status = normalizeStatus(card.status)
   const syncDate = sync?.completed_at ?? card.last_synced_at
   const healthyCutoff = new Date()
   healthyCutoff.setUTCDate(healthyCutoff.getUTCDate() - 1)
   const syncHealthy = Date.parse(syncDate) >= healthyCutoff.getTime()
   const customerDisplayName = customer?.company_name ?? customer?.contact_name ?? 'Unmatched'
   const driverDisplayName = card.driver_name ?? (driver ? `${driver.first_name} ${driver.last_name}` : 'Unassigned')
+  const canManageCards = profile != null && ['owner', 'general_manager'].includes(profile.role)
+  const operations = (operationsResult.data ?? []) as Array<{ id: string, operation_type: string, status: string, provider_reference: string | null, error_message: string | null, requested_at: string, completed_at: string | null }>
   const details: DetailField[][] = [
     [
       { label: 'Status', value: <CardStatusBadge status={card.status} /> },
@@ -73,10 +77,12 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
           Fuel Cards
         </Link>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <Button type="button" variant="outline" size="lg" disabled title="Card-status mutations are not connected to WEX yet.">
-            <Snowflake data-icon="inline-start" />
-            {status === 'frozen' ? 'Unfreeze card' : 'Freeze card'}
-          </Button>
+          {canManageCards && <FuelCardStatusControl cardId={card.id} status={card.status} />}
+          {canManageCards && <ReplaceFuelCardDialog cardId={card.id} cardLast4={card.card_last4} />}
+          {canManageCards && <FuelCardLimitsDialog cardId={card.id} current={{
+            dailyAmount: nullableNumber(card.daily_limit), weeklyAmount: nullableNumber(card.weekly_limit), monthlyAmount: nullableNumber(card.monthly_limit),
+            dailyTransactions: nullableNumber(card.daily_transaction_limit), weeklyTransactions: nullableNumber(card.weekly_transaction_limit), monthlyTransactions: nullableNumber(card.monthly_transaction_limit),
+          }} />}
           <Link href="#customer-assignment" className={buttonVariants({ variant: 'outline', size: 'lg' })}>
             <Building2 data-icon="inline-start" />
             Edit assignment
@@ -139,6 +145,35 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
             </CardHeader>
             <CardContent>
               <CustomerAssignment cardId={card.id} currentId={card.customer_id} customers={customerOptions} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Card management history</CardTitle>
+              <CardDescription>Provider-backed status, limit, and issuance activity recorded for this card.</CardDescription>
+              <CardAction><History className="text-muted-foreground" /></CardAction>
+            </CardHeader>
+            <CardContent className="flex flex-col">
+              {operations.length ? operations.map((operation, index) => (
+                <div key={operation.id}>
+                  <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium">{formatOperation(operation.operation_type)}</p>
+                        <OperationStatusBadge status={operation.status} />
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Requested <LocalDateTime value={operation.requested_at} />
+                        {operation.provider_reference ? ` · WEX reference ${operation.provider_reference}` : ''}
+                      </p>
+                      {operation.error_message && <p className="mt-2 text-sm text-destructive">{operation.error_message}</p>}
+                    </div>
+                    {operation.completed_at && <p className="text-xs text-muted-foreground"><LocalDateTime value={operation.completed_at} /></p>}
+                  </div>
+                  {index < operations.length - 1 && <Separator />}
+                </div>
+              )) : <p className="py-6 text-center text-sm text-muted-foreground">No card-management operations have been recorded.</p>}
             </CardContent>
           </Card>
 
@@ -206,6 +241,10 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
               <PolicyRow label="Daily spend limit" value={Number(card.daily_limit) ? formatCurrency(card.daily_limit) : 'Not set'} />
               <PolicyRow label="Weekly spend limit" value={Number(card.weekly_limit) ? formatCurrency(card.weekly_limit) : 'Not set'} />
               <PolicyRow label="Monthly spend limit" value={Number(card.monthly_limit) ? formatCurrency(card.monthly_limit) : 'Not set'} />
+              <PolicyRow label="Daily transactions" value={card.daily_transaction_limit == null ? 'Not set' : String(card.daily_transaction_limit)} />
+              <PolicyRow label="Weekly transactions" value={card.weekly_transaction_limit == null ? 'Not set' : String(card.weekly_transaction_limit)} />
+              <PolicyRow label="Monthly transactions" value={card.monthly_transaction_limit == null ? 'Not set' : String(card.monthly_transaction_limit)} />
+              <PolicyRow label="Limit source" value={card.refreshing_limit_source ? formatLabel(card.refreshing_limit_source) : 'Not set'} />
               <PolicyRow label="Gallon limit" value={Number(card.gallon_limit) ? `${Number(card.gallon_limit).toLocaleString()} gal` : 'Not set'} />
               <PolicyRow label="Products" value={restriction ? productSummary(restriction) : 'No restrictions stored'} last />
             </CardContent>
@@ -270,6 +309,11 @@ function TransactionStatusBadge({ status }: { status: string }) {
   )}>{formatLabel(status)}</Badge>
 }
 
+function OperationStatusBadge({ status }: { status: string }) {
+  const normalized = normalizeStatus(status)
+  return <Badge variant={normalized === 'failed' || normalized === 'needs_attention' ? 'destructive' : normalized === 'succeeded' ? 'default' : 'secondary'}>{formatLabel(status)}</Badge>
+}
+
 function oneRelation(value: unknown): Record<string, unknown> | null {
   if (Array.isArray(value)) return (value[0] as Record<string, unknown> | undefined) ?? null
   return value && typeof value === 'object' ? value as Record<string, unknown> : null
@@ -285,3 +329,5 @@ function formatLabel(value: string) { return value.replaceAll('_', ' ').replace(
 function formatCurrency(value: number | string | null | undefined) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value ?? 0)) }
 function formatDate(value: string) { return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(value)) }
 function initials(value: string) { return value.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'FC' }
+function nullableNumber(value: number | string | null | undefined) { const parsed = Number(value); return value == null || !Number.isFinite(parsed) || parsed === 0 ? null : parsed }
+function formatOperation(value: string) { return ({ freeze: 'Card frozen', unfreeze: 'Card reactivated', set_limits: 'Spending limits changed', issue: 'Card ordered' } as Record<string, string>)[value] ?? formatLabel(value) }

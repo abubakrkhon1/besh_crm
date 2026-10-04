@@ -1,20 +1,21 @@
 import Link from 'next/link'
-import { AlertTriangle, CheckCircle2, CreditCard, DollarSign, Ellipsis, Link2Off, Snowflake, Tag, UserRound, UserRoundX } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ClipboardList, CreditCard, DollarSign, Ellipsis, Link2Off, Snowflake, Tag, UserRound, UserRoundX } from 'lucide-react'
 import { getGeneralManagerDashboard } from '@/app/actions/leads'
 import { DashboardDateFilter } from '@/components/crm/DashboardDateFilter'
 import { FuelCardFilters, FuelCardSyncButton } from '@/components/crm/FuelCardControls'
+import { IssueFuelCardDialog } from '@/components/crm/FuelCardManagementControls'
 import { FuelCardStatusChart } from '@/components/crm/FuelCardStatusChart'
 import { PaginatedTable } from '@/components/crm/ui/PaginatedTable'
 import { TablePagination } from '@/components/crm/ui/TablePagination'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LocalDateTime } from '@/components/ui/local-date-time'
 import { getWexFreshness, type WexFreshnessStatus, type WexSyncResource } from '@/lib/integrations/wex/freshness'
 import { fuelCardQuerySchema } from '@/lib/integrations/wex/schemas'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, getCurrentProfile } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
 type FuelCardRow = {
@@ -67,7 +68,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   cardQuery = cardQuery.order(params.sort, { ascending: params.dir === 'asc' })
   if (params.sort === 'status') cardQuery = cardQuery.order('last_synced_at', { ascending: false })
 
-  const [cardsResult, summaryResult, syncStateResult, failedRunsResult, transactionStats, activityResult, alertsResult] = await Promise.all([
+  const [cardsResult, summaryResult, syncStateResult, failedRunsResult, transactionStats, activityResult, alertsResult, profile, operationsResult] = await Promise.all([
     cardQuery.range(offset, offset + params.pageSize - 1),
     db.from('fuel_cards').select('id,card_last4,customer_id,driver_name,external_driver_id,unit_number,status,policy_number,is_overridden,last_synced_at,customers(company_name,contact_name)', { count: 'exact' }).eq('provider', 'wex_efs').range(0, 9_999),
     db.from('wex_sync_state').select('resource,last_succeeded_at').eq('provider', 'wex_efs').in('resource', ['transactions', 'account', 'reconciliation']),
@@ -75,6 +76,8 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
     getGeneralManagerDashboard(range.rangeStart, range.rangeEnd),
     db.from('fuel_transactions').select('id,transaction_date,amount,merchant_name,merchant_state,provider_transaction_type,customers(id,company_name,contact_name),fuel_cards(id,card_last4,driver_name)').eq('provider', 'wex_efs').eq('status', 'posted').gte('transaction_date', range.rangeStart).lt('transaction_date', range.rangeEnd).order('transaction_date', { ascending: false }).limit(25),
     db.from('wex_sync_alerts').select('id,severity,title,message,updated_at').eq('provider', 'wex_efs').eq('status', 'open').order('updated_at', { ascending: false }).limit(3),
+    getCurrentProfile(),
+    db.from('fuel_card_operations').select('id,operation_type,status,provider_reference,error_message,requested_at,fuel_cards(card_last4)').order('requested_at', { ascending: false }).limit(8),
   ])
 
   const cards = (cardsResult.data ?? []) as FuelCardRow[]
@@ -82,6 +85,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   const statuses = [...new Set(summaryCards.map((card) => card.status).filter(Boolean))].sort()
   const policies = [...new Set(summaryCards.map((card) => card.policy_number).filter((value): value is string => Boolean(value)))].sort()
   const customers = buildCustomers(summaryCards)
+  const canManageCards = profile != null && ['owner', 'general_manager'].includes(profile.role)
   const statusDistribution = buildStatusDistribution(summaryCards)
   const assignedDrivers = new Set(summaryCards
     .filter((card) => card.external_driver_id || card.driver_name)
@@ -100,6 +104,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   ]
   const activity = (activityResult.data ?? []) as Array<Record<string, unknown>>
   const syncAlerts = (alertsResult.data ?? []) as Array<{ id: string, severity: 'warning' | 'critical', title: string, message: string, updated_at: string }>
+  const managementOperations = (operationsResult.data ?? []) as Array<{ id: string, operation_type: string, status: string, provider_reference: string | null, error_message: string | null, requested_at: string, fuel_cards: { card_last4: string | null } | Array<{ card_last4: string | null }> | null }>
 
   return (
     <div className="flex animate-fade-in flex-col gap-4 pb-12">
@@ -110,10 +115,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
         </div>
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
           <DashboardDateFilter from={range.from} to={range.to} path="/crm/fuel-cards" description="Choose the fuel transaction dates to include." />
-          <Button type="button" variant="outline" size="lg" disabled title="Card issuance is not connected to a provider workflow yet.">
-            <CreditCard data-icon="inline-start" />
-            Issue card
-          </Button>
+          {canManageCards && <IssueFuelCardDialog customers={customers.map(({ id, name }) => ({ id, name }))} />}
           <FuelCardSyncButton />
         </div>
       </header>
@@ -216,6 +218,26 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
 
         <aside className="flex min-w-0 flex-col gap-4">
           <FuelCardStatusChart statuses={statusDistribution} />
+
+          {canManageCards && <Card>
+            <CardHeader>
+              <CardTitle>Recent management</CardTitle>
+              <CardDescription>Latest WEX card actions and orders.</CardDescription>
+              <CardAction><ClipboardList className="text-muted-foreground" /></CardAction>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {managementOperations.length ? managementOperations.map((operation) => {
+                const relatedCard = Array.isArray(operation.fuel_cards) ? operation.fuel_cards[0] : operation.fuel_cards
+                return <div key={operation.id} className="flex items-start justify-between gap-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{formatOperation(operation.operation_type)}{relatedCard?.card_last4 ? ` · •••• ${relatedCard.card_last4}` : ''}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{operation.provider_reference ? `WEX ${operation.provider_reference}` : operation.error_message ?? 'No provider reference'}</p>
+                  </div>
+                  <Badge variant={operation.status === 'failed' || operation.status === 'needs_attention' ? 'destructive' : operation.status === 'succeeded' ? 'default' : 'secondary'}>{formatLabel(operation.status)}</Badge>
+                </div>
+              }) : <p className="py-4 text-center text-sm text-muted-foreground">No card-management activity yet.</p>}
+            </CardContent>
+          </Card>}
 
           <Card>
             <CardHeader>
@@ -352,6 +374,7 @@ function buildStatusDistribution(cards: SummaryCard[]) {
 }
 
 function statusCount(rows: Array<{ status: string; count: number }>, status: string) {
+  if (status === 'frozen') return rows.filter((row) => row.status === 'frozen' || row.status === 'inactive').reduce((sum, row) => sum + row.count, 0)
   return rows.find((row) => row.status === status)?.count ?? 0
 }
 
@@ -400,3 +423,4 @@ function toDateValue(value: Date) {
 function normalizeStatus(value: string) { return value.trim().toLowerCase().replaceAll(' ', '_') }
 function formatLabel(value: string) { return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }
 function formatCurrency(value: number | string | null | undefined) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value ?? 0)) }
+function formatOperation(value: string) { return ({ freeze: 'Card frozen', unfreeze: 'Card reactivated', set_limits: 'Limits changed', issue: 'Card ordered' } as Record<string, string>)[value] ?? formatLabel(value) }

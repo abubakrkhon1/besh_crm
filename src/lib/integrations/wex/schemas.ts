@@ -75,6 +75,58 @@ export const syncRunSchema = z.object({ runId: z.string().uuid() })
 export const mappingActionSchema = z.object({
   fuelCardId: z.string().uuid(), customerId: z.string().uuid().nullable(),
 })
+const optionalLimit = z.number().int().min(0).max(1_000_000).nullable()
+const optionalCountLimit = z.number().int().min(0).max(10_000).nullable()
+export const cardStatusActionSchema = z.object({
+  fuelCardId: z.string().uuid(),
+  action: z.enum(['freeze', 'unfreeze']),
+  idempotencyKey: z.string().uuid(),
+})
+export const cardLimitsActionSchema = z.object({
+  fuelCardId: z.string().uuid(),
+  idempotencyKey: z.string().uuid(),
+  dailyAmount: optionalLimit,
+  weeklyAmount: optionalLimit,
+  monthlyAmount: optionalLimit,
+  dailyTransactions: optionalCountLimit,
+  weeklyTransactions: optionalCountLimit,
+  monthlyTransactions: optionalCountLimit,
+}).refine((value) => [value.dailyAmount, value.weeklyAmount, value.monthlyAmount, value.dailyTransactions, value.weeklyTransactions, value.monthlyTransactions].some((item) => item != null), {
+  message: 'Enter at least one spending or transaction limit.',
+})
+export const cardOrderActionSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  customerId: z.string().uuid().nullable(),
+  orderType: z.number().int().positive(),
+  policyNumber: z.number().int().positive(),
+  cardStyle: z.number().int().positive(),
+  embossedName: z.string().trim().min(1).max(26),
+  shipToFirst: z.string().trim().min(1).max(50),
+  shipToLast: z.string().trim().min(1).max(50),
+  shipToAddress1: z.string().trim().min(1).max(100),
+  shipToAddress2: z.string().trim().max(100),
+  shipToCity: z.string().trim().min(1).max(50),
+  shipToState: z.string().trim().length(2).transform((value) => value.toUpperCase()),
+  shipToZip: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, 'Enter a valid US ZIP code.'),
+  shippingMethod: z.number().int().min(0).max(99),
+  rushProcessing: z.boolean(),
+  cardCarrier: z.string().trim().max(50),
+})
+export const cardReplacementActionSchema = z.object({
+  fuelCardId: z.string().uuid(),
+  idempotencyKey: z.string().uuid(),
+  replacementType: z.enum(['lost', 'stolen', 'damaged']),
+  shipToFirst: z.string().trim().min(1).max(50),
+  shipToLast: z.string().trim().min(1).max(50),
+  shipToAddress1: z.string().trim().min(1).max(100),
+  shipToAddress2: z.string().trim().max(100),
+  shipToCity: z.string().trim().min(1).max(50),
+  shipToState: z.string().trim().length(2).transform((value) => value.toUpperCase()),
+  shipToZip: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, 'Enter a valid US ZIP code.'),
+  shippingMethod: z.number().int().min(0).max(99),
+  rushProcessing: z.boolean(),
+  reason: z.string().trim().min(1).max(100),
+})
 export const fuelCardQuerySchema = z.object({
   q: z.string().trim().max(100).catch(''), status: z.string().trim().max(50).catch(''),
   match: z.enum(['all', 'matched', 'unmatched']).catch('all'),

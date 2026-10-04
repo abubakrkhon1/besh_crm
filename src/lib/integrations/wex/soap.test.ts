@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
-import { assertNoSoapFault, parseAccountTransactionsV3, parseCardSummaries, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin } from './soap'
+import { assertNoSoapFault, parseAccountTransactionsV3, parseAllowedOrderTypes, parseCardRefreshingLimits, parseCardSummaries, parseCardV2, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin, parseMutationResponse, serializeCardOrder, serializeCardV2, serializeRefreshingLimits, serializeReplacementCardOrder } from './soap'
 
 const envelope = (body: string) => `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body>${body}</soapenv:Body></soapenv:Envelope>`
 const card = (last4: string, extra = '') => `<value><cardNumber>TESTCARD${last4}</cardNumber><driverName>Sanitized Driver</driverName><status>ACTIVE</status>${extra}</value>`
@@ -61,5 +61,35 @@ describe('WEX SOAP parsing', () => {
   it('parses contract credit limits with CRM-friendly names', () => {
     const xml = envelope('<getCreditLimitsResponse><result><contractStatus>ACTIVE</contractStatus><transLimit>2500</transLimit><origLimit>25000</origLimit><creditAvailable>16657.82</creditAvailable><dailyLimit>5000</dailyLimit><dailyAvailable>4200</dailyAvailable><totalAvailable>16657.82</totalAvailable><maxMoneyCode>500</maxMoneyCode><uom>USD</uom></result></getCreditLimitsResponse>')
     expect(parseCreditLimits(xml)).toMatchObject({ originalLimit: 25000, creditAvailable: 16657.82, transactionLimit: 2500, unitOfMeasure: 'USD' })
+  })
+  it('parses and serializes complete card details without exposing them to storage', () => {
+    const xml = envelope('<getCardv2Response><result><cardNumber>TESTCARD1001</cardNumber><header><locationOverride>0</locationOverride><overrideAllLocations>false</overrideAllLocations><override>0</override><policyNumber>17</policyNumber><status>ACTIVE</status></header><infos><infoId>DRIVER</infoId><lengthCheck>true</lengthCheck><maximum>10</maximum><minimum>1</minimum><value>2</value></infos><limits><hours>24</hours><limit>500</limit><limitId>FUEL</limitId><minHours>1</minHours><autoRollMap>0</autoRollMap><autoRollMax>0</autoRollMax></limits><locations>42</locations></result></getCardv2Response>')
+    const result = parseCardV2(xml)
+    expect(result.header).toMatchObject({ policyNumber: 17, status: 'ACTIVE' })
+    expect(result.limits[0]).toMatchObject({ limitId: 'FUEL', limit: 500 })
+    expect(serializeCardV2(result)).toContain('<status>ACTIVE</status>')
+  })
+  it('parses per-card refreshing limits', () => {
+    const xml = envelope('<getCardRefreshingLimitsResponse><cardRefreshingLimitsData><refreshingLimitSource>CARD</refreshingLimitSource><dayCntLimit>4</dayCntLimit><dayAmtLimit>500</dayAmtLimit><weekAmtLimit>2500</weekAmtLimit><monAmtLimit>8000</monAmtLimit></cardRefreshingLimitsData></getCardRefreshingLimitsResponse>')
+    expect(parseCardRefreshingLimits(xml)).toEqual({
+      refreshingLimitSource: 'CARD', dayCountLimit: 4, dayAmountLimit: 500,
+      weekCountLimit: null, weekAmountLimit: 2500, monthCountLimit: null, monthAmountLimit: 8000,
+    })
+  })
+  it('parses allowed order defaults and successful mutation responses', () => {
+    const choices = parseAllowedOrderTypes(envelope('<getAllowedOrderTypesResponse><response><value><orderType>2</orderType><orderDesc>New card</orderDesc><defCardStyle>5</defCardStyle><defCardStyleDesc>Fleet</defCardStyleDesc><defPolicy>17</defPolicy></value></response></getAllowedOrderTypesResponse>'))
+    expect(choices[0]).toEqual({ orderType: 2, orderDescription: 'New card', defaultCardStyle: 5, defaultCardStyleDescription: 'Fleet', defaultPolicy: 17 })
+    expect(parseMutationResponse(envelope('<setCardRefreshingLimitsResponse><requestStatus><errorCode>0</errorCode><description>OK</description></requestStatus></setCardRefreshingLimitsResponse>'), 'setCardRefreshingLimits')).toMatchObject({ errorCode: 0 })
+    expect(parseMutationResponse(envelope('<createAndSubmitOrderResponse><orderId>9001</orderId><requestStatus><errorCode>0</errorCode></requestStatus></createAndSubmitOrderResponse>'), 'createAndSubmitOrder')).toMatchObject({ orderId: '9001' })
+    expect(parseMutationResponse(envelope('<replaceLostOrStolenCardResponse><orderId>9002</orderId><requestStatus><errorCode>0</errorCode></requestStatus></replaceLostOrStolenCardResponse>'), 'replaceLostOrStolenCard')).toMatchObject({ orderId: '9002' })
+  })
+  it('rejects provider mutation failures', () => {
+    expect(() => parseMutationResponse(envelope('<setCardRefreshingLimitsResponse><requestStatus><errorCode>12</errorCode><description>Invalid limit</description></requestStatus></setCardRefreshingLimitsResponse>'), 'setCardRefreshingLimits')).toThrow('Invalid limit')
+    expect(() => parseMutationResponse(envelope('<setCardRefreshingLimitsResponse><requestStatus><errorCode>12</errorCode><description>Invalid card 1234567890123456</description></requestStatus></setCardRefreshingLimitsResponse>'), 'setCardRefreshingLimits')).toThrow('Invalid card [redacted]')
+  })
+  it('escapes user-entered values in mutation payloads', () => {
+    expect(serializeRefreshingLimits({ refreshingLimitSource: 'CARD', dayCountLimit: null, dayAmountLimit: 500, weekCountLimit: null, weekAmountLimit: null, monthCountLimit: null, monthAmountLimit: null })).toContain('<dayAmtLimit>500</dayAmtLimit>')
+    expect(serializeCardOrder({ policyNumber: 17, orderType: 2, cardStyle: 5, embossedName: 'A & B', shipToFirst: 'A', shipToLast: 'B', shipToAddress1: '1 Main', shipToAddress2: '', shipToCity: 'Tulsa', shipToState: 'OK', shipToZip: '74101', shipToCountry: 'US', shippingMethod: 1, rushProcessing: 'N', cardCarrier: '' })).toContain('<embossedName>A &amp; B</embossedName>')
+    expect(serializeReplacementCardOrder({ cardNumber: 'TEST1001', shipToFirst: 'A & B', shipToLast: 'Driver', shipToAddress1: '1 Main', shipToAddress2: '', shipToCity: 'Tulsa', shipToState: 'OK', shipToZip: '74101', shipToCountry: 'US', shippingMethod: 1, rushProcessing: 'N', reason: 'Lost & missing' })).toContain('<reason>Lost &amp; missing</reason>')
   })
 })
