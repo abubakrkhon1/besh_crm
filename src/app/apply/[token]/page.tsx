@@ -1,4 +1,4 @@
-import { FileText } from 'lucide-react'
+import { CheckCircle2, FileText } from 'lucide-react'
 import { getApplicationInvitation } from '@/app/actions/application-invitations'
 import { NewApplicationModal } from '@/components/crm/NewApplicationModal'
 
@@ -21,6 +21,14 @@ export default async function PublicApplicationPage({ params }: { params: Promis
 
         {invitation.status === 'valid' ? (
           <NewApplicationModal embedded invitationToken={token} initialEmail={invitation.email} />
+        ) : invitation.status === 'submitted' ? (
+          <div className="flex min-h-[26rem] flex-col items-center justify-center gap-4 rounded-2xl border bg-card p-8 text-center shadow-sm">
+            <CheckCircle2 className="size-12 text-status-success-foreground" />
+            <div className="flex max-w-md flex-col gap-2">
+              <h1 className="text-2xl font-bold">Application submitted successfully!</h1>
+              <p className="text-muted-foreground">Thank you. The BESH team has received your application and will contact you after it has been reviewed.</p>
+            </div>
+          </div>
         ) : (
           <div className="flex min-h-[24rem] flex-col items-center justify-center gap-3 rounded-2xl border bg-card p-8 text-center shadow-sm">
             <h1 className="text-2xl font-bold">
@@ -37,4 +45,3 @@ export default async function PublicApplicationPage({ params }: { params: Promis
     </main>
   )
 }
-

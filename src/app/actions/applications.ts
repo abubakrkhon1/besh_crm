@@ -1,23 +1,28 @@
 'use server'
 
+import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient, requireRoles } from '@/lib/supabase/server'
-import { Application, ApplicationStatus } from '@/types/database.types'
+import { ApplicationStatus } from '@/types/database.types'
+import {
+  APPLICATION_SAFE_SELECT,
+  type ApplicationForReview,
+  type ApplicationSafe,
+  withoutSensitiveApplicationFields,
+} from '@/lib/application-access'
 import { applicationSubmissionSchema, type ApplicationSubmission } from '@/lib/validation/applications'
 import { revalidatePath } from 'next/cache'
 
 const APPLICATION_ROLES = ['owner', 'admin', 'general_manager', 'sales_manager'] as const
 
-export async function getApplications(): Promise<Application[]> {
-  const supabase = await createClient()
-
+export async function getApplications(): Promise<ApplicationSafe[]> {
   const { error: accessError } = await requireRoles(APPLICATION_ROLES)
   if (accessError) {
     return []
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await createAdminClient()
     .from('applications')
-    .select('*')
+    .select(APPLICATION_SAFE_SELECT)
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -25,20 +30,19 @@ export async function getApplications(): Promise<Application[]> {
     return []
   }
 
-  return data as Application[]
+  return data as unknown as ApplicationSafe[]
 }
 
-export async function getApplication(id: string): Promise<Application | null> {
-  const supabase = await createClient()
-
-  const { error: accessError } = await requireRoles(APPLICATION_ROLES)
-  if (accessError) {
+export async function getApplication(id: string): Promise<ApplicationForReview | null> {
+  const { error: accessError, profile } = await requireRoles(APPLICATION_ROLES)
+  if (accessError || !profile) {
     return null
   }
 
-  const { data, error } = await supabase
+  const canReviewSensitiveFields = ['owner', 'admin', 'general_manager'].includes(profile.role)
+  const { data, error } = await createAdminClient()
     .from('applications')
-    .select('*')
+    .select(canReviewSensitiveFields ? '*' : APPLICATION_SAFE_SELECT)
     .eq('id', id)
     .single()
 
@@ -47,7 +51,8 @@ export async function getApplication(id: string): Promise<Application | null> {
     return null
   }
 
-  return data as Application
+  if (canReviewSensitiveFields) return data as unknown as ApplicationForReview
+  return withoutSensitiveApplicationFields(data as unknown as ApplicationSafe)
 }
 
 export async function getDashboardStats() {
@@ -131,6 +136,16 @@ export async function createApplication(data: ApplicationSubmission) {
     return { error: 'Unauthorized' }
   }
 
+  const { data: applicantProfile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role,is_active')
+    .eq('auth_user_id', user.id)
+    .maybeSingle()
+  if (profileError || !applicantProfile?.is_active) return { error: 'Account access is unavailable.' }
+  if (applicantProfile.role !== 'driver') {
+    return { error: 'CRM and company portal accounts cannot submit customer applications.' }
+  }
+
   const parsed = applicationSubmissionSchema.safeParse(data)
   if (!parsed.success) {
     return { error: 'Please review the form and complete every required field.' }
@@ -140,7 +155,7 @@ export async function createApplication(data: ApplicationSubmission) {
   const { data: createdApp, error } = await supabase
     .from('applications')
     .insert([{ ...parsed.data, auth_user_id: user.id, status: 'pending' }])
-    .select()
+    .select(APPLICATION_SAFE_SELECT)
     .single()
 
   if (error) {
@@ -150,5 +165,5 @@ export async function createApplication(data: ApplicationSubmission) {
 
   revalidatePath('/crm/applications')
   revalidatePath('/crm/dashboard')
-  return { success: true, application: createdApp as Application }
+  return { success: true, application: createdApp as unknown as ApplicationSafe }
 }

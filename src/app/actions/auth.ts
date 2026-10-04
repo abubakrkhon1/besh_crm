@@ -27,23 +27,24 @@ export async function login(formData: FormData): Promise<LoginResult> {
     return { error: 'Invalid email or password.' }
   }
 
-  // Drivers use Besh Mobile. Only CRM roles may enter this application.
+  // Drivers use Besh Mobile. Staff and customer administrators use this web app.
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role,customer_id')
     .eq('auth_user_id', data.user.id)
     .eq('is_active', true)
     .single()
 
   const crmRoles = ['owner', 'admin', 'general_manager', 'sales_manager', 'sales_agent']
-  if (profileError || !profile || !crmRoles.includes(profile.role)) {
+  const isCustomerAdmin = profile?.role === 'customer_admin' && Boolean(profile.customer_id)
+  if (profileError || !profile || (!crmRoles.includes(profile.role) && !isCustomerAdmin)) {
     await supabase.auth.signOut()
-    console.warn('Login denied for an account without an active CRM role.')
-    return { error: 'Access denied. This account does not have Fuel CRM access.' }
+    console.warn('Login denied for an account without an active web role.')
+    return { error: 'Access denied. This account does not have BESH web access.' }
   }
 
   revalidatePath('/', 'layout')
-  redirect('/crm/dashboard')
+  redirect(isCustomerAdmin ? '/portal/dashboard' : '/crm/dashboard')
 }
 
 export async function logout() {

@@ -12,7 +12,7 @@ import {
   type DriverActivationState,
 } from '@/lib/validation/drivers'
 
-const DRIVER_ADMIN_ROLES = ['owner', 'admin', 'general_manager'] as const
+const DRIVER_MANAGER_ROLES = ['owner', 'admin', 'general_manager', 'customer_admin'] as const
 const INVITATION_LIFETIME_MS = 72 * 60 * 60 * 1_000
 
 export type DriverInvitationActionResult = {
@@ -40,6 +40,16 @@ function driverName(driver: { display_name?: string | null; first_name: string; 
   return driver.display_name?.trim() || `${driver.first_name} ${driver.last_name}`.trim() || 'Driver'
 }
 
+function canManageDriver(profile: { role: string; customer_id: string | null }, customerId: string) {
+  return profile.role !== 'customer_admin' || profile.customer_id === customerId
+}
+
+function revalidateDriverViews(customerId: string) {
+  revalidatePath(`/crm/customers/${customerId}`)
+  revalidatePath('/portal/dashboard')
+  revalidatePath('/portal/drivers')
+}
+
 async function sendDriverInvitationEmail(email: string, name: string, activationUrl: string) {
   const safeName = escapeEmailHtml(name)
   const safeUrl = escapeEmailHtml(activationUrl)
@@ -54,7 +64,7 @@ export async function sendDriverInvitation(input: unknown): Promise<DriverInvita
   const parsed = driverInvitationSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invitation details are invalid.' }
 
-  const { error: accessError, profile } = await requireRoles(DRIVER_ADMIN_ROLES)
+  const { error: accessError, profile } = await requireRoles(DRIVER_MANAGER_ROLES)
   if (accessError || !profile) return { error: accessError ?? 'Unauthorized' }
 
   const admin = createAdminClient()
@@ -65,6 +75,7 @@ export async function sendDriverInvitation(input: unknown): Promise<DriverInvita
     .maybeSingle()
 
   if (driverError || !driver) return { error: 'Driver could not be found.' }
+  if (!canManageDriver(profile, driver.customer_id)) return { error: 'You cannot manage a driver outside your company.' }
   if (driver.status !== 'active' || driver.onboarding_status === 'disabled') return { error: 'Only active drivers can be invited.' }
   if (driver.auth_user_id || driver.onboarding_status === 'active') return { error: 'This driver already has a mobile account.' }
 
@@ -83,7 +94,7 @@ export async function sendDriverInvitation(input: unknown): Promise<DriverInvita
   const expiresAt = new Date(now.getTime() + INVITATION_LIFETIME_MS).toISOString()
   let activationUrl: string
   try {
-    activationUrl = `${await getApplicationBaseUrl()}/driver-activation/${token}`
+    activationUrl = `${getApplicationBaseUrl()}/driver-activation/${token}`
   } catch (error) {
     console.error('Driver activation URL could not be built.', error)
     return { error: 'The public application URL is not configured.' }
@@ -128,7 +139,7 @@ export async function sendDriverInvitation(input: unknown): Promise<DriverInvita
     return { error: 'The invitation was created but could not be finalized. Revoke it before retrying.' }
   }
 
-  revalidatePath(`/crm/customers/${driver.customer_id}`)
+  revalidateDriverViews(driver.customer_id)
   if (!delivery.sent) return { success: true, warning: delivery.error, activationUrl }
   return { success: true, activationUrl }
 }
@@ -137,13 +148,14 @@ export async function revokeDriverInvitation(driverId: string): Promise<DriverIn
   const parsedDriverId = driverInvitationSchema.shape.driverId.safeParse(driverId)
   if (!parsedDriverId.success) return { error: 'Driver ID is invalid.' }
 
-  const { error: accessError } = await requireRoles(DRIVER_ADMIN_ROLES)
-  if (accessError) return { error: accessError }
+  const { error: accessError, profile } = await requireRoles(DRIVER_MANAGER_ROLES)
+  if (accessError || !profile) return { error: accessError ?? 'Unauthorized' }
 
   const admin = createAdminClient()
   const now = new Date().toISOString()
   const { data: driver } = await admin.from('drivers').select('id,customer_id,auth_user_id,onboarding_status').eq('id', driverId).maybeSingle()
   if (!driver) return { error: 'Driver could not be found.' }
+  if (!canManageDriver(profile, driver.customer_id)) return { error: 'You cannot manage a driver outside your company.' }
   if (driver.auth_user_id || driver.onboarding_status === 'active') return { error: 'An activated account cannot be revoked as an invitation.' }
 
   const { error } = await admin.from('driver_invitations').update({ status: 'revoked', revoked_at: now })
@@ -151,7 +163,7 @@ export async function revokeDriverInvitation(driverId: string): Promise<DriverIn
   if (error) return { error: 'Invitation could not be revoked.' }
 
   await admin.from('drivers').update({ onboarding_status: 'unclaimed', invited_at: null }).eq('id', driverId).is('auth_user_id', null)
-  revalidatePath(`/crm/customers/${driver.customer_id}`)
+  revalidateDriverViews(driver.customer_id)
   return { success: true }
 }
 
@@ -159,8 +171,8 @@ export async function setDriverMobileAccess(driverId: string, enabled: boolean):
   const parsedDriverId = driverInvitationSchema.shape.driverId.safeParse(driverId)
   if (!parsedDriverId.success || typeof enabled !== 'boolean') return { error: 'Mobile access request is invalid.' }
 
-  const { error: accessError } = await requireRoles(DRIVER_ADMIN_ROLES)
-  if (accessError) return { error: accessError }
+  const { error: accessError, profile } = await requireRoles(DRIVER_MANAGER_ROLES)
+  if (accessError || !profile) return { error: accessError ?? 'Unauthorized' }
 
   const admin = createAdminClient()
   const { data: driver } = await admin.from('drivers')
@@ -168,6 +180,7 @@ export async function setDriverMobileAccess(driverId: string, enabled: boolean):
     .eq('id', driverId)
     .maybeSingle()
   if (!driver) return { error: 'Driver could not be found.' }
+  if (!canManageDriver(profile, driver.customer_id)) return { error: 'You cannot manage a driver outside your company.' }
   if (!driver.auth_user_id) return { error: 'This driver has not activated a mobile account.' }
   if (enabled && driver.status !== 'active') return { error: 'An inactive or suspended driver cannot be enabled.' }
 
@@ -188,11 +201,11 @@ export async function setDriverMobileAccess(driverId: string, enabled: boolean):
     }
     // The driver row and RLS policies already deny data access. Report success
     // with a warning so operators know the secondary profile flag needs repair.
-    revalidatePath(`/crm/customers/${driver.customer_id}`)
+    revalidateDriverViews(driver.customer_id)
     return { success: true, warning: 'Access is blocked, but the Auth profile audit flag could not be updated.' }
   }
 
-  revalidatePath(`/crm/customers/${driver.customer_id}`)
+  revalidateDriverViews(driver.customer_id)
   return { success: true }
 }
 

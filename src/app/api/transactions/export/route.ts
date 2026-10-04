@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createCsv } from '@/lib/csv'
+import { createClient, CRM_ROLES, requireRoles } from '@/lib/supabase/server'
 
 type ExportTransaction = {
   provider_transaction_id: string | null
@@ -17,6 +18,14 @@ type ExportTransaction = {
 }
 
 export async function GET(request: NextRequest) {
+  const { error: accessError } = await requireRoles(CRM_ROLES)
+  if (accessError) {
+    return NextResponse.json({ error: 'CRM access is required.' }, {
+      status: accessError === 'Unauthorized' ? 401 : 403,
+      headers: { 'Cache-Control': 'private, no-store, max-age=0' },
+    })
+  }
+
   const params = request.nextUrl.searchParams
   const from = validDate(params.get('from')) ? params.get('from')! : formatDateInput(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const to = validDate(params.get('to')) ? params.get('to')! : formatDateInput(new Date())
@@ -64,11 +73,12 @@ export async function GET(request: NextRequest) {
       transaction.provider_transaction_id ?? '',
     ]
   })
-  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')
+  const csv = createCsv([headers, ...rows])
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="transactions-${from}-to-${to}.csv"`,
+      'Cache-Control': 'private, no-store, max-age=0',
     },
   })
 }
@@ -76,11 +86,6 @@ export async function GET(request: NextRequest) {
 function oneRelation(value: unknown): Record<string, unknown> | null {
   if (Array.isArray(value)) return (value[0] as Record<string, unknown> | undefined) ?? null
   return value && typeof value === 'object' ? value as Record<string, unknown> : null
-}
-
-function csvCell(value: unknown) {
-  const text = String(value ?? '')
-  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 
 function validUuid(value: string | null): value is string {

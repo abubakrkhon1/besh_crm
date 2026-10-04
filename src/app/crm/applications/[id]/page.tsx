@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { LocalDateTime } from '@/components/ui/local-date-time'
-import { Application } from '@/types/database.types'
+import type { ApplicationForReview } from '@/lib/application-access'
 import { RequestDocumentsDialog } from '@/components/crm/RequestDocumentsDialog'
 import { ApplicationDocumentsReview } from '@/components/crm/ApplicationDocumentsReview'
 import { getStaffApplicationDocuments } from '@/app/actions/application-documents'
@@ -293,7 +293,7 @@ function Check({ label, value }: { label: string; value: boolean }) {
   )
 }
 
-function ApplicationStatus({ status }: { status: Application['status'] }) {
+function ApplicationStatus({ status }: { status: ApplicationForReview['status'] }) {
   return (
     <StatusBadge
       status={status === 'approved' ? 'success' : status === 'denied' ? 'danger' : status === 'under_review' ? 'info' : 'pending'}
@@ -320,7 +320,7 @@ function mask(value?: string | null) {
   return `•••• ${value.slice(-4)}`
 }
 
-function address(application: Application) {
+function address(application: ApplicationForReview) {
   return [
     application.business_physical_address,
     application.address_line_2,
@@ -330,7 +330,7 @@ function address(application: Application) {
   ].filter(Boolean).join(', ')
 }
 
-function residentialAddress(application: Application) {
+function residentialAddress(application: ApplicationForReview) {
   return [
     application.residential_address,
     application.residential_city,

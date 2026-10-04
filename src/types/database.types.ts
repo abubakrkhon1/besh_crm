@@ -5,6 +5,7 @@ export type UserRole =
   | 'general_manager'
   | 'sales_manager'
   | 'sales_agent'
+  | 'customer_admin'
   | 'accounting'
   | 'compliance'
   | 'support'
@@ -26,6 +27,7 @@ export interface Database {
           avatar_url: string | null;
           manager_profile_id: string | null;
           department: string | null;
+          customer_id: string | null;
           is_active: boolean;
           created_at: string;
           updated_at: string;
@@ -39,6 +41,7 @@ export interface Database {
           avatar_url?: string | null;
           manager_profile_id?: string | null;
           department?: string | null;
+          customer_id?: string | null;
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;
@@ -52,6 +55,7 @@ export interface Database {
           avatar_url?: string | null;
           manager_profile_id?: string | null;
           department?: string | null;
+          customer_id?: string | null;
           is_active?: boolean;
           updated_at?: string;
         };
@@ -388,6 +392,41 @@ export interface Database {
         };
         Update: never;
       };
+      station_savings_prices: {
+        Row: {
+          id: string;
+          station_brand: StationBrand;
+          pump_price_per_gallon: number | null;
+          wex_price_per_gallon: number | null;
+          our_price_per_gallon: number;
+          customer_savings_per_gallon: number | null;
+          gross_profit_per_gallon: number | null;
+          effective_from: string;
+          effective_until: string | null;
+          change_reason: string | null;
+          created_by_profile_id: string;
+          updated_by_profile_id: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          station_brand: StationBrand;
+          pump_price_per_gallon?: number | null;
+          wex_price_per_gallon?: number | null;
+          our_price_per_gallon: number;
+          customer_savings_per_gallon?: never;
+          gross_profit_per_gallon?: never;
+          effective_from: string;
+          effective_until?: string | null;
+          change_reason?: string | null;
+          created_by_profile_id: string;
+          updated_by_profile_id: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<Database['public']['Tables']['station_savings_prices']['Row'], 'id' | 'created_at' | 'customer_savings_per_gallon' | 'gross_profit_per_gallon'>>;
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -463,3 +502,5 @@ export interface LeadActivity {
 }
 export type Lead = Database['public']['Tables']['leads']['Row'];
 export type LeadInsert = Database['public']['Tables']['leads']['Insert'];
+export type StationBrand = 'loves' | 'pilot' | 'flying_j';
+export type StationSavingsPrice = Database['public']['Tables']['station_savings_prices']['Row'];

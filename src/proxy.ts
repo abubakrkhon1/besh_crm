@@ -32,36 +32,49 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const isCrmRoute = request.nextUrl.pathname.startsWith('/crm')
+  const isPortalRoute = request.nextUrl.pathname.startsWith('/portal')
   const isAuthRoute = request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/signup'
 
   // Redirect to login if unauthenticated user tries to access /crm
-  if (isCrmRoute && !user) {
+  if ((isCrmRoute || isPortalRoute) && !user) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
   // Redirect to dashboard if authenticated user tries to access login/signup
+  let authenticatedHome = '/crm/dashboard'
+  if (user && (isAuthRoute || request.nextUrl.pathname === '/')) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role,customer_id')
+      .eq('auth_user_id', user.id)
+      .eq('is_active', true)
+      .maybeSingle()
+    if (profile?.role === 'customer_admin' && profile.customer_id) authenticatedHome = '/portal/dashboard'
+  }
+
   if (isAuthRoute && user) {
     const url = request.nextUrl.clone()
-    url.pathname = '/crm/dashboard'
+    url.pathname = authenticatedHome
     return NextResponse.redirect(url)
   }
 
   // Also redirect root to /crm/dashboard
   if (request.nextUrl.pathname === '/') {
     const url = request.nextUrl.clone()
-    url.pathname = user ? '/crm/dashboard' : '/login'
+    url.pathname = user ? authenticatedHome : '/login'
     return NextResponse.redirect(url)
   }
 
   if (
     request.nextUrl.pathname.startsWith('/driver-activation/') ||
-    request.nextUrl.pathname === '/reset-password'
+    request.nextUrl.pathname === '/reset-password' ||
+    isPortalRoute
   ) {
     supabaseResponse.headers.set('Cache-Control', 'private, no-store, max-age=0')
-    supabaseResponse.headers.set('Referrer-Policy', 'no-referrer')
     supabaseResponse.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')
+    if (!isPortalRoute) supabaseResponse.headers.set('Referrer-Policy', 'no-referrer')
   }
 
   return supabaseResponse

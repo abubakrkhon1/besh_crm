@@ -2,7 +2,7 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import {
   ArrowLeft, CheckCircle2, CreditCard, DollarSign, Download,
-  Edit, Ellipsis, Mail, Phone, TrendingUp, Clock,
+  Ellipsis, Mail, Phone, TrendingUp, Clock,
 } from "lucide-react"
 
 import {
@@ -11,6 +11,8 @@ import {
 } from "@/components/crm/CustomerSectionTabs"
 import { CustomerSpendTrend } from "@/components/crm/EntityOverviewCharts"
 import { DriverMobileInvitationDialog } from "@/components/crm/DriverMobileInvitationDialog"
+import { CustomerPortalAccessDialog } from "@/components/crm/CustomerPortalAccessDialog"
+import { EditCustomerDialog } from "@/components/crm/EditCustomerDialog"
 import { TablePagination } from "@/components/crm/ui/TablePagination"
 import { getTablePageSize } from "@/components/crm/ui/table-page-sizes"
 import { LocalDateTime } from "@/components/ui/local-date-time"
@@ -25,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { createClient } from "@/lib/supabase/server"
+import { createClient, getCurrentProfile } from "@/lib/supabase/server"
 import { cn } from "@/lib/utils"
 
 type CardRecord = {
@@ -51,17 +53,26 @@ export default async function CustomerPage({
   const { id } = await params
   const query = await searchParams
   const db = await createClient()
+  const profile = await getCurrentProfile()
   const section = sections.includes(query.view as CustomerSection)
     ? (query.view as CustomerSection)
     : "fuel-cards"
 
   const { data: customer } = await db
     .from("customers")
-    .select("id,company_name,contact_name,email,phone,status,current_balance,monthly_spend,lifetime_spend,credit_limit,wex_carrier_id,last_synced_at")
+    .select("id,company_name,contact_name,email,phone,status,current_balance,monthly_spend,lifetime_spend,credit_limit,notes,wex_carrier_id,last_synced_at")
     .eq("id", id)
     .single()
 
   if (!customer) notFound()
+
+  const { data: portalAdmin } = await db
+    .from("profiles")
+    .select("full_name,email,is_active")
+    .eq("customer_id", id)
+    .eq("role", "customer_admin")
+    .limit(1)
+    .maybeSingle()
 
   const { data: transactionData, count: transactionCount } = await db
     .from("fuel_transactions")
@@ -127,12 +138,28 @@ export default async function CustomerPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {profile && ["owner", "general_manager"].includes(profile.role) && (
+            <CustomerPortalAccessDialog
+              customerId={customer.id}
+              contactEmail={customer.email ?? ""}
+              existingAdmin={portalAdmin ? { fullName: portalAdmin.full_name, email: portalAdmin.email, isActive: portalAdmin.is_active } : null}
+            />
+          )}
           <Button variant="outline" size="sm">
             <Download data-icon="inline-start" />Export
           </Button>
-          <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90">
-            <Edit data-icon="inline-start" />Edit Customer
-          </Button>
+          {profile && ["owner", "admin", "general_manager"].includes(profile.role) && (
+            <EditCustomerDialog customer={{
+              id: customer.id,
+              companyName: customer.company_name ?? "",
+              contactName: customer.contact_name ?? "",
+              email: customer.email ?? "",
+              phone: customer.phone ?? "",
+              status: customer.status as "active" | "pending" | "suspended" | "closed",
+              creditLimit: Number(customer.credit_limit ?? 0),
+              notes: customer.notes ?? "",
+            }} />
+          )}
           <Button variant="outline" size="sm" aria-label="More options">
             <Ellipsis className="size-4" />
           </Button>
@@ -457,7 +484,6 @@ async function DriversTable({ customerId, query }: { customerId: string; query: 
               <TableHead>Active Cards</TableHead>
               <TableHead>Units</TableHead>
               <TableHead>Last Synced</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -472,25 +498,27 @@ async function DriversTable({ customerId, query }: { customerId: string; query: 
                 <TableRow key={driver.id}>
                   <TableCell><p className="font-medium">{name}</p><p className="text-xs text-muted-foreground">{driver.email ?? "No verified email"}</p></TableCell>
                   <TableCell className="tabular-nums text-muted-foreground">{driver.external_driver_id ?? "—"}</TableCell>
-                  <TableCell><DriverOnboardingBadge status={driver.onboarding_status} /></TableCell>
+                  <TableCell>
+                    <div className="flex min-w-max items-center gap-2">
+                      <DriverOnboardingBadge status={driver.onboarding_status} />
+                      <DriverMobileInvitationDialog
+                        driverId={driver.id}
+                        driverName={name}
+                        email={driver.email}
+                        authUserLinked={Boolean(driver.auth_user_id)}
+                        onboardingStatus={driver.onboarding_status}
+                        latestInvitation={latestInvitation ? {
+                          status: latestInvitation.status,
+                          recipientEmail: latestInvitation.recipient_email,
+                          expiresAt: latestInvitation.expires_at,
+                        } : null}
+                      />
+                    </div>
+                  </TableCell>
                   <TableCell className="tabular-nums">{cards.length}</TableCell>
                   <TableCell className="tabular-nums">{cards.filter((card: any) => card.status?.toLowerCase() === "active").length}</TableCell>
                   <TableCell className="text-muted-foreground">{units.join(", ") || "—"}</TableCell>
                   <TableCell className="text-muted-foreground">{driver.last_synced_at ? <LocalDateTime value={driver.last_synced_at} /> : "—"}</TableCell>
-                  <TableCell className="text-right">
-                    <DriverMobileInvitationDialog
-                      driverId={driver.id}
-                      driverName={name}
-                      email={driver.email}
-                      authUserLinked={Boolean(driver.auth_user_id)}
-                      onboardingStatus={driver.onboarding_status}
-                      latestInvitation={latestInvitation ? {
-                        status: latestInvitation.status,
-                        recipientEmail: latestInvitation.recipient_email,
-                        expiresAt: latestInvitation.expires_at,
-                      } : null}
-                    />
-                  </TableCell>
                 </TableRow>
               )
             })}

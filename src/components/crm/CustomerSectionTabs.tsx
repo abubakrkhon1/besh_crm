@@ -7,9 +7,6 @@ import { Input } from "@/components/ui/input"
 
 export type CustomerSection = "fuel-cards" | "drivers" | "transactions" | "overview"
 
-const activeTabClassName =
-  "data-active:bg-primary-dim data-active:text-primary data-active:font-semibold data-active:shadow-sm"
-
 export function CustomerSectionTabs({ value }: { value: CustomerSection }) {
   const pathname = usePathname()
   const router = useRouter()

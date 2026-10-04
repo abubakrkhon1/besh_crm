@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FileText, Settings, LogOut, Users, CreditCard, BarChart, ReceiptText, Contact, Flame, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, FileText, Settings, LogOut, Users, CreditCard, BarChart, ReceiptText, Contact, Flame, Tags, type LucideIcon } from 'lucide-react'
 import { logout } from '@/app/actions/auth'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -35,11 +35,18 @@ const salesRepresentativeNavigation: NavigationItem[] = [
 
 export function Sidebar({ profile }: { profile: Profile }) {
   const pathname = usePathname()
-  const navigation = profile.role === 'sales_manager'
+  const baseNavigation = profile.role === 'sales_manager'
     ? salesManagerNavigation
     : profile.role === 'sales_agent'
       ? salesRepresentativeNavigation
       : [...operationsNavigation.slice(0, 1), { name: 'Leads', href: '/crm/leads', icon: Contact }, ...operationsNavigation.slice(1)]
+  const navigation = ['owner', 'general_manager'].includes(profile.role)
+    ? [
+        ...baseNavigation.slice(0, 5),
+        { name: 'Savings Pricing', href: '/crm/savings-pricing', icon: Tags },
+        ...baseNavigation.slice(5),
+      ]
+    : baseNavigation
 
   return (
     <aside className="flex h-full w-[202px] flex-col bg-sidebar text-sidebar-foreground">

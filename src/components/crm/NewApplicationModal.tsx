@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Application } from '@/types/database.types'
+import type { ApplicationSafe } from '@/lib/application-access'
 import { createApplication } from '@/app/actions/applications'
 import { submitInvitedApplication } from '@/app/actions/application-invitations'
 import type { ApplicationSubmission } from '@/lib/validation/applications'
@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 
 interface NewApplicationModalProps {
   onClose?: () => void
-  onSuccess?: (app: Application) => void
+  onSuccess?: (app: ApplicationSafe) => void
   embedded?: boolean
   invitationToken?: string
   initialEmail?: string
@@ -136,7 +136,7 @@ export function NewApplicationModal({ onClose, onSuccess, embedded = false, invi
       <div className="flex min-h-[26rem] flex-col items-center justify-center gap-4 rounded-2xl border bg-card p-8 text-center shadow-sm">
         <CheckCircle2 className="size-12 text-status-success-foreground" />
         <div className="flex max-w-md flex-col gap-2">
-          <h2 className="text-2xl font-bold">Application submitted</h2>
+          <h2 className="text-2xl font-bold">Application submitted successfully!</h2>
           <p className="text-muted-foreground">Thank you. The BESH team has received your application and will contact you after it has been reviewed.</p>
         </div>
       </div>

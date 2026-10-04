@@ -1,10 +1,11 @@
 'use server'
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { cookies, headers } from 'next/headers'
+import { cookies } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
+import { getApplicationBaseUrl } from '@/lib/app-url'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRoles } from '@/lib/supabase/server'
 import { escapeEmailHtml, sendApplicationEmail } from '@/lib/email/resend'
@@ -36,15 +37,6 @@ const DOCUMENT_LABELS: Record<string, string> = {
 
 function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex')
-}
-
-async function publicBaseUrl() {
-  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')
-  const requestHeaders = await headers()
-  const host = requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host')
-  const protocol = requestHeaders.get('x-forwarded-proto') ?? (host?.startsWith('localhost') ? 'http' : 'https')
-  if (!host) throw new Error('Unable to determine public application URL.')
-  return `${protocol}://${host}`
 }
 
 export type RequestDocumentsResult = {
@@ -86,7 +78,13 @@ export async function requestApplicationDocuments(input: unknown): Promise<Reque
   if (!requests.length) return { error: 'Those documents have already been requested for this application.' }
 
   const token = randomBytes(32).toString('base64url')
-  const accessUrl = `${await publicBaseUrl()}/application-access/${token}`
+  let accessUrl: string
+  try {
+    accessUrl = `${getApplicationBaseUrl()}/application-access/${token}`
+  } catch (error) {
+    console.error('Unable to build the public document URL:', error)
+    return { error: 'The public application URL is not configured.' }
+  }
   const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
 
   const { data: createdRequests, error: requestsError } = await admin.from('application_document_requests').insert(requests).select('id')
@@ -373,6 +371,15 @@ export async function rejectApplicationDocument(input: unknown) {
   ])
   if (!request || !application) return { error: 'Application document details are unavailable.' }
 
+  const token = randomBytes(32).toString('base64url')
+  let accessUrl: string
+  try {
+    accessUrl = `${getApplicationBaseUrl()}/application-access/${token}`
+  } catch (error) {
+    console.error('Unable to build the replacement document URL:', error)
+    return { error: 'The public application URL is not configured.' }
+  }
+
   const now = new Date().toISOString()
   await Promise.all([
     admin.from('application_documents').update({ review_status: 'rejected', rejection_reason: parsed.data.reason, reviewed_by_profile_id: profile.id, reviewed_at: now }).eq('id', document.id),
@@ -380,8 +387,6 @@ export async function rejectApplicationDocument(input: unknown) {
     admin.from('applications').update({ status: 'needs_documents' }).eq('id', document.application_id),
   ])
 
-  const token = randomBytes(32).toString('base64url')
-  const accessUrl = `${await publicBaseUrl()}/application-access/${token}`
   await admin.from('application_access_links').update({ revoked_at: now }).eq('application_id', document.application_id).is('consumed_at', null).is('revoked_at', null)
   const { data: link, error: linkError } = await admin.from('application_access_links').insert({
     application_id: document.application_id, token_hash: hashToken(token), created_by_profile_id: profile.id,

@@ -24,6 +24,7 @@ import {
 } from '@/lib/validation/auth'
 
 type RecoveryState = 'verifying' | 'ready' | 'invalid' | 'complete'
+const supportedLinkTypes = new Set(['invite', 'recovery'])
 
 export default function ResetPasswordPage() {
   const supabaseRef = useRef(createClient())
@@ -48,7 +49,7 @@ export default function ResetPasswordPage() {
       const linkError = url.searchParams.get('error_description')
       if (linkError) {
         if (active) {
-          setError('This password reset link is invalid or has expired.')
+          setError('This account setup or password reset link is invalid or has expired.')
           setRecoveryState('invalid')
         }
         return
@@ -64,10 +65,25 @@ export default function ResetPasswordPage() {
         }
       }
 
+      const tokenHash = url.searchParams.get('token_hash')
+      const queryType = url.searchParams.get('type')
+      if (tokenHash && queryType && supportedLinkTypes.has(queryType)) {
+        const { error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: queryType as 'invite' | 'recovery',
+        })
+        if (!verifyError) {
+          window.history.replaceState({}, '', url.pathname)
+          markReady()
+          return
+        }
+      }
+
       const hash = new URLSearchParams(url.hash.slice(1))
       const accessToken = hash.get('access_token')
       const refreshToken = hash.get('refresh_token')
-      if (accessToken && refreshToken && hash.get('type') === 'recovery') {
+      const hashType = hash.get('type')
+      if (accessToken && refreshToken && hashType && supportedLinkTypes.has(hashType)) {
         const { error: sessionError } = await supabase.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken,
@@ -79,14 +95,8 @@ export default function ResetPasswordPage() {
         }
       }
 
-      const { data } = await supabase.auth.getSession()
-      if (data.session) {
-        markReady()
-        return
-      }
-
       if (active) {
-        setError('This password reset link is invalid or has expired.')
+        setError('This account setup or password reset link is invalid or has expired.')
         setRecoveryState('invalid')
       }
     }
@@ -151,7 +161,7 @@ export default function ResetPasswordPage() {
           <CardDescription>
             {recoveryState === 'complete'
               ? 'Your new password is ready to use in Besh Fuel.'
-              : 'Choose a strong password for your driver account.'}
+              : 'Choose a strong password for your BESH account.'}
           </CardDescription>
         </CardHeader>
 
@@ -159,14 +169,14 @@ export default function ResetPasswordPage() {
           {recoveryState === 'verifying' && (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
               <Loader2 aria-hidden="true" className="animate-spin" />
-              Verifying your reset link…
+              Verifying your account link…
             </div>
           )}
 
           {recoveryState === 'invalid' && (
             <Alert variant="destructive">
               <AlertCircle aria-hidden="true" />
-              <AlertTitle>Reset link unavailable</AlertTitle>
+              <AlertTitle>Account link unavailable</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
@@ -176,7 +186,7 @@ export default function ResetPasswordPage() {
               <CheckCircle2 aria-hidden="true" />
               <AlertTitle>Password changed successfully</AlertTitle>
               <AlertDescription>
-                Return to the mobile app and sign in with your new password.
+                Return to the BESH sign-in page and use your new password.
               </AlertDescription>
             </Alert>
           )}

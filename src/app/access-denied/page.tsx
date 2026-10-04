@@ -9,11 +9,11 @@ export default function AccessDeniedPage() {
         <CardHeader>
           <CardTitle>Fuel CRM access required</CardTitle>
           <CardDescription>
-            This account belongs to Besh Mobile or does not have an active CRM role.
+            This account does not have access to the requested BESH workspace.
           </CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          Ask an owner or administrator to assign the correct staff role.
+          Ask a BESH administrator to confirm your role and company assignment.
         </CardContent>
         <CardFooter>
           <form action={logout} className="w-full">

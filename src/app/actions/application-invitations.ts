@@ -1,11 +1,12 @@
 'use server'
 
 import { createHash, randomBytes } from 'node:crypto'
-import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import { getApplicationBaseUrl } from '@/lib/app-url'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRoles } from '@/lib/supabase/server'
+import { getApplicationInvitationState } from '@/lib/application-invitations'
 import { applicationSubmissionSchema, type ApplicationSubmission } from '@/lib/validation/applications'
 
 const APPLICATION_ROLES = ['owner', 'admin', 'general_manager', 'sales_manager'] as const
@@ -13,7 +14,7 @@ const emailSchema = z.string().trim().email('Enter a valid email address.').max(
 
 type InvitationLookup =
   | { status: 'valid'; email: string; expiresAt: string }
-  | { status: 'invalid' | 'expired' | 'used' }
+  | { status: 'invalid' | 'expired' | 'used' | 'submitted' }
 
 export type SendInvitationResult = {
   success?: boolean
@@ -24,16 +25,6 @@ export type SendInvitationResult = {
 
 function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex')
-}
-
-async function applicationBaseUrl() {
-  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')
-
-  const requestHeaders = await headers()
-  const host = requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host')
-  const protocol = requestHeaders.get('x-forwarded-proto') ?? (host?.startsWith('localhost') ? 'http' : 'https')
-  if (!host) throw new Error('Unable to determine the application URL.')
-  return `${protocol}://${host}`
 }
 
 function escapeHtml(value: string) {
@@ -87,7 +78,7 @@ export async function sendApplicationInvitation(emailInput: string): Promise<Sen
   const token = randomBytes(32).toString('base64url')
   let invitationUrl: string
   try {
-    invitationUrl = `${await applicationBaseUrl()}/apply/${token}`
+    invitationUrl = `${getApplicationBaseUrl()}/apply/${token}`
   } catch (error) {
     console.error('Unable to build the public application URL:', error)
     return { error: 'Unable to determine the public CRM URL.' }
@@ -117,13 +108,13 @@ export async function getApplicationInvitation(token: string): Promise<Invitatio
   const admin = createAdminClient()
   const { data, error } = await admin
     .from('application_invitations')
-    .select('recipient_email, expires_at, used_at')
+    .select('recipient_email, expires_at, used_at, application_id')
     .eq('token_hash', hashToken(token))
     .maybeSingle()
 
   if (error || !data) return { status: 'invalid' }
-  if (data.used_at) return { status: 'used' }
-  if (new Date(data.expires_at) <= new Date()) return { status: 'expired' }
+  const status = getApplicationInvitationState(data)
+  if (status !== 'valid') return { status }
   return { status: 'valid', email: data.recipient_email, expiresAt: data.expires_at }
 }
 

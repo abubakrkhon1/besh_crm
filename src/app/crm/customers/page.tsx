@@ -5,7 +5,7 @@ import { TablePagination } from '@/components/crm/ui/TablePagination'
 import { getTablePageSize } from '@/components/crm/ui/table-page-sizes'
 import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -17,26 +17,7 @@ type CustomerRow = {
   id: string; company_name: string | null; contact_name: string | null; email: string | null; phone: string | null; status: string; wex_carrier_id: string | null; wex_company_xref: string | null; last_synced_at: string | null; monthly_spend: number | null; fuel_cards: Array<{ count: number }>; fuel_transactions: Array<{ count: number }>
 }
 
-// Mini sparkline using inline SVG path for server components (no recharts in RSC)
-function SparklineSVG({ color, variant = 'up' }: { color: string; variant?: 'up' | 'down' | 'flat' }) {
-  const paths: Record<string, string> = {
-    up: 'M0,30 C10,25 15,20 25,15 C35,10 40,8 50,5 C60,2 70,4 80,2',
-    down: 'M0,5 C10,8 20,10 30,12 C40,15 50,18 60,20 C70,24 75,26 80,30',
-    flat: 'M0,15 C15,12 20,18 35,14 C50,10 60,18 75,14 C78,13 79,14 80,15',
-  }
-  return (
-    <svg width="80" height="32" viewBox="0 0 80 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs>
-        <linearGradient id={`fill-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.2" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`${paths[variant]} L80,32 L0,32 Z`} fill={`url(#fill-${color.replace('#', '')})`} />
-      <path d={paths[variant]} stroke={color} strokeWidth="1.5" fill="none" strokeLinecap="round" />
-    </svg>
-  )
-}
+type CustomerSummaryRow = Pick<CustomerRow, 'id' | 'company_name' | 'contact_name' | 'status' | 'last_synced_at' | 'monthly_spend' | 'fuel_cards'>
 
 // Avatar circle with initials
 function CustomerAvatar({ name, status }: { name: string; status: string }) {
@@ -67,8 +48,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const db = await createClient()
   const staleDate = new Date(); staleDate.setUTCDate(staleDate.getUTCDate() - 30); const staleCutoff = staleDate.toISOString()
 
-  const { data: summaryData } = await db.from('customers').select('id,company_name,contact_name,email,phone,status,wex_carrier_id,wex_company_xref,last_synced_at,monthly_spend,fuel_cards(count),fuel_transactions(count)').range(0, 9_999)
-  const summary = (summaryData ?? []) as CustomerRow[]
+  const { data: summaryData } = await db.from('customers').select('id,company_name,contact_name,status,last_synced_at,monthly_spend,fuel_cards(count)').range(0, 9_999)
+  const summary = (summaryData ?? []) as CustomerSummaryRow[]
   const statuses = [...new Set(summary.map((c) => c.status).filter(Boolean))].sort()
   const statusCounts = buildStatusCounts(summary)
   const activeCustomers = statusCounts.find((item) => item.status === 'active')?.count ?? 0
@@ -76,7 +57,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const monthlySpend = summary.reduce((sum, c) => sum + Number(c.monthly_spend ?? 0), 0)
   const topCustomers = [...summary].sort((a, b) => Number(b.monthly_spend ?? 0) - Number(a.monthly_spend ?? 0)).slice(0, 5)
   const latestSync = summary.map((c) => c.last_synced_at).filter((v): v is string => Boolean(v)).sort().at(-1)
-  const failedRecords = 2 // static UI for design
+  const synchronizedCustomers = summary.filter((customer) => Boolean(customer.last_synced_at)).length
+  const unsynchronizedCustomers = summary.length - synchronizedCustomers
 
   let customerQuery: any = db.from('customers').select('id,company_name,contact_name,email,phone,status,wex_carrier_id,wex_company_xref,last_synced_at,monthly_spend,fuel_cards(count),fuel_transactions(count)', { count: 'exact' })
   if (q) {
@@ -97,47 +79,35 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <p className="text-[13px] text-muted-foreground">Monitor customer accounts synchronized from WEX carrier data.</p>
       </header>
 
-      {/* Metric cards with sparklines */}
+      {/* Metrics derived from the current customer records. */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <CustomerMetricCard
           title="Total Customers"
           value={summary.length}
-          trend="8.5% vs last month"
-          trendPositive
+          description="Current customer records"
           icon={<Users className="size-5" />}
           iconClass="text-status-new-foreground"
-          sparkVariant="up"
-          sparkColor="#2563eb"
         />
         <CustomerMetricCard
           title="Active Customers"
           value={activeCustomers}
-          trend="11.2% vs last month"
-          trendPositive
+          description={`${summary.length ? Math.round(activeCustomers / summary.length * 100) : 0}% of customers`}
           icon={<UserCheck className="size-5" />}
           iconClass="text-status-success-foreground"
-          sparkVariant="up"
-          sparkColor="#14b8a6"
         />
         <CustomerMetricCard
           title="Total Cards"
           value={totalCards.toLocaleString()}
-          trend="5.4% vs last month"
-          trendPositive
+          description="Cards linked to customers"
           icon={<CreditCard className="size-5" />}
           iconClass="text-status-process-foreground"
-          sparkVariant="flat"
-          sparkColor="#8b5cf6"
         />
         <CustomerMetricCard
           title="Monthly Spend"
           value={formatCompactCurrency(monthlySpend)}
-          trend="12.7% vs last month"
-          trendPositive
+          description="Combined current monthly spend"
           icon={<DollarSign className="size-5" />}
           iconClass="text-status-follow-up-foreground"
-          sparkVariant="up"
-          sparkColor="#f97316"
         />
       </div>
 
@@ -159,15 +129,6 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                     <NativeSelect className="w-full [&_[data-slot=native-select]]:h-5 [&_[data-slot=native-select]]:rounded-none [&_[data-slot=native-select]]:border-0 [&_[data-slot=native-select]]:bg-transparent [&_[data-slot=native-select]]:px-0 [&_[data-slot=native-select]]:py-0 [&_[data-slot=native-select]]:pr-6 [&_[data-slot=native-select]]:text-xs [&_[data-slot=native-select]]:shadow-none [&_[data-slot=native-select-icon]]:right-0" name="status" defaultValue={status} size="sm" aria-label="Filter customers by status">
                       <NativeSelectOption value="">All</NativeSelectOption>
                       {statuses.map((option) => <NativeSelectOption key={option} value={option}>{formatLabel(option)}</NativeSelectOption>)}
-                    </NativeSelect>
-                  </div>
-                  <div className="w-32 rounded-md border bg-card px-2 pb-1 pt-1">
-                    <span className="block text-[10px] leading-none text-muted-foreground">Account Type</span>
-                    <NativeSelect className="w-full [&_[data-slot=native-select]]:h-5 [&_[data-slot=native-select]]:rounded-none [&_[data-slot=native-select]]:border-0 [&_[data-slot=native-select]]:bg-transparent [&_[data-slot=native-select]]:px-0 [&_[data-slot=native-select]]:py-0 [&_[data-slot=native-select]]:pr-6 [&_[data-slot=native-select]]:text-xs [&_[data-slot=native-select]]:shadow-none [&_[data-slot=native-select-icon]]:right-0" name="account_type" defaultValue="" size="sm" aria-label="Filter by account type">
-                      <NativeSelectOption value="">All</NativeSelectOption>
-                      <NativeSelectOption value="credit_line">Credit Line</NativeSelectOption>
-                      <NativeSelectOption value="prepaid">Prepaid</NativeSelectOption>
-                      <NativeSelectOption value="deposit">Deposit</NativeSelectOption>
                     </NativeSelect>
                   </div>
                   <div className="w-44 rounded-md border bg-card px-2 pb-1 pt-1">
@@ -262,9 +223,6 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
             </CardHeader>
             <CardContent>
               <CustomerHealthChart counts={statusCounts} />
-              <button className="mt-3 flex w-full items-center justify-between rounded-md px-0 py-1 text-xs font-medium text-primary hover:underline">
-                View all customer health <span>›</span>
-              </button>
             </CardContent>
           </Card>
 
@@ -281,9 +239,6 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   <span className="font-semibold tabular-nums shrink-0">{formatCompactCurrency(customer.monthly_spend)}</span>
                 </Link>
               ))}
-              <button className="mt-1 flex w-full items-center justify-between rounded-md px-0 py-1 text-xs font-medium text-primary hover:underline">
-                View all customers by spend <span>›</span>
-              </button>
             </CardContent>
           </Card>
 
@@ -298,11 +253,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                 value={latestSync ? <LocalDateTime value={latestSync} /> : 'No successful sync'}
                 tone="green"
               />
-              <SyncLine label="Records synchronized" value={String(summary.length)} tone="blue" />
-              <SyncLine label="Failed records" value={String(failedRecords)} tone="orange" />
-              <button className="mt-1 flex w-full items-center justify-between rounded-md px-0 py-1 text-xs font-medium text-primary hover:underline">
-                View sync history <span>›</span>
-              </button>
+              <SyncLine label="Customers synchronized" value={String(synchronizedCustomers)} tone="blue" />
+              <SyncLine label="Not synchronized" value={String(unsynchronizedCustomers)} tone="orange" />
             </CardContent>
           </Card>
         </aside>
@@ -316,34 +268,27 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
 type MetricTone = 'blue' | 'green' | 'violet' | 'orange'
 
 function CustomerMetricCard({
-  title, value, trend, trendPositive, icon, iconClass, sparkVariant, sparkColor,
+  title, value, description, icon, iconClass,
 }: {
-  title: string; value: string | number; trend: string; trendPositive: boolean;
-  icon: React.ReactNode; iconClass: string; sparkVariant: 'up' | 'down' | 'flat'; sparkColor: string;
+  title: string; value: string | number; description: string;
+  icon: React.ReactNode; iconClass: string;
 }) {
   return (
-    <Card className="min-w-0 overflow-hidden py-0 shadow-sm">
-      <CardContent className="p-4">
-        <div className="flex items-start gap-3">
-          <span className={cn(
-            'flex size-11 shrink-0 items-center justify-center rounded-lg',
-            title === 'Total Customers' && 'bg-status-new',
-            title === 'Active Customers' && 'bg-status-success',
-            title === 'Total Cards' && 'bg-status-process',
-            title === 'Monthly Spend' && 'bg-status-follow-up',
-            iconClass,
-          )}>{icon}</span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] font-semibold text-muted-foreground">{title}</p>
-            <p className="mt-1 text-[23px] font-bold leading-none tabular-nums">{typeof value === 'number' ? value.toLocaleString() : value}</p>
-          </div>
-        </div>
-        <div className="mt-2 flex items-end justify-between gap-2">
-          <p className={cn('flex items-center gap-1 text-[10px] font-medium', trendPositive ? 'text-status-success-foreground' : 'text-destructive')}>
-            <span>{trendPositive ? '↗' : '↘'}</span><span>{trend}</span>
-          </p>
-          <div className="h-8 w-[86px] shrink-0"><SparklineSVG color={sparkColor} variant={sparkVariant} /></div>
-        </div>
+    <Card size="sm" className="min-w-0 shadow-sm">
+      <CardHeader className="grid grid-cols-[auto_1fr] items-center gap-x-3">
+        <span className={cn(
+          'row-span-2 flex size-11 shrink-0 items-center justify-center rounded-lg',
+          title === 'Total Customers' && 'bg-status-new',
+          title === 'Active Customers' && 'bg-status-success',
+          title === 'Total Cards' && 'bg-status-process',
+          title === 'Monthly Spend' && 'bg-status-follow-up',
+          iconClass,
+        )}>{icon}</span>
+        <CardTitle className="truncate text-[11px] text-muted-foreground">{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="text-[23px] font-bold leading-none tabular-nums">{typeof value === 'number' ? value.toLocaleString() : value}</p>
       </CardContent>
     </Card>
   )
@@ -380,7 +325,7 @@ function SyncLine({ label, value, tone }: { label: string; value: React.ReactNod
   )
 }
 
-function buildStatusCounts(customers: CustomerRow[]) {
+function buildStatusCounts(customers: Array<Pick<CustomerRow, 'status'>>) {
   const counts = new Map<string, number>()
   customers.forEach((c) => { const s = c.status.toLowerCase(); counts.set(s, (counts.get(s) ?? 0) + 1) })
   return [...counts.entries()].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count)

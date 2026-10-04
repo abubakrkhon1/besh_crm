@@ -91,12 +91,16 @@ export function DriverMobileInvitationDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button type="button" variant="outline" size="sm" />}>
         <Mail data-icon="inline-start" />
-        {authUserLinked ? 'Manage access' : onboardingStatus === 'invited' ? 'Manage invite' : 'Invite to mobile'}
+        {authUserLinked ? 'Manage access' : onboardingStatus === 'invited' ? 'Manage invitation' : 'Set up access'}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{authUserLinked ? `Manage ${driverName}` : `Invite ${driverName}`}</DialogTitle>
-          <DialogDescription>{authUserLinked ? 'Enable or immediately disable this driver’s mobile data access.' : 'Send a private account-activation link. Synchronization never creates a password or login automatically.'}</DialogDescription>
+          <DialogTitle>{authUserLinked ? `Manage ${driverName}` : `Set up mobile access for ${driverName}`}</DialogTitle>
+          <DialogDescription>
+            {authUserLinked
+              ? 'Enable or immediately disable this driver’s mobile data access.'
+              : 'Enter the driver’s verified email. It will become their mobile login, and we’ll email them a secure link to create their password.'}
+          </DialogDescription>
         </DialogHeader>
         {authUserLinked ? (
           <div className="flex flex-col gap-4">
@@ -140,14 +144,14 @@ export function DriverMobileInvitationDialog({
           <FieldGroup>
             <Field data-invalid={Boolean(error)}>
               <FieldLabel htmlFor={`driver-email-${driverId}`}>Verified driver email</FieldLabel>
-              <Input id={`driver-email-${driverId}`} value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" maxLength={254} required aria-invalid={Boolean(error)} />
-              <FieldDescription>Confirm this address with the driver before sending. It becomes their mobile login.</FieldDescription>
+              <Input id={`driver-email-${driverId}`} value={email} onChange={(event) => setEmail(event.target.value)} type="email" inputMode="email" autoComplete="email" placeholder="driver@example.com" maxLength={254} required aria-invalid={Boolean(error)} />
+              <FieldDescription>Confirm this address with the driver. The invitation expires after 72 hours and can be used once.</FieldDescription>
               <FieldError>{error}</FieldError>
             </Field>
           </FieldGroup>
           <DialogFooter>
             {onboardingStatus === 'invited' && <Button type="button" variant="destructive" disabled={pending} onClick={revoke}>Revoke</Button>}
-            <Button type="submit" disabled={pending}>{pending ? 'Sending…' : onboardingStatus === 'invited' ? 'Resend invitation' : 'Send invitation'}</Button>
+            <Button type="submit" disabled={pending}>{pending ? 'Sending…' : onboardingStatus === 'invited' ? 'Resend setup email' : 'Send setup email'}</Button>
           </DialogFooter>
         </form>}
       </DialogContent>

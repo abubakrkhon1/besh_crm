@@ -83,6 +83,13 @@ export async function getCurrentProfile(): Promise<Profile | null> {
     return null
   }
 
+  if (data.role === 'customer_admin') {
+    const { data: activeCustomerId, error: customerError } = await supabase.rpc('current_customer_id')
+    if (customerError || !data.customer_id || activeCustomerId !== data.customer_id) {
+      return null
+    }
+  }
+
   return data as Profile
 }
 
@@ -91,6 +98,17 @@ export async function requireRoles(roles: readonly UserRole[]) {
 
   if (!profile) return { error: 'Unauthorized', profile: null }
   if (!roles.includes(profile.role)) return { error: 'Forbidden', profile: null }
+
+  return { error: null, profile }
+}
+
+export async function requireCustomerPortalProfile() {
+  const profile = await getCurrentProfile()
+
+  if (!profile) return { error: 'Unauthorized', profile: null }
+  if (profile.role !== 'customer_admin' || !profile.customer_id) {
+    return { error: 'Forbidden', profile: null }
+  }
 
   return { error: null, profile }
 }

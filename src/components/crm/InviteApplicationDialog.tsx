@@ -56,7 +56,7 @@ export function InviteApplicationDialog() {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger render={<Button type="button" variant="outline" size="sm" />}>
+      <DialogTrigger render={<Button type="button" size="sm" />}>
         <MailPlus data-icon="inline-start" />
         Invite applicant
       </DialogTrigger>
@@ -116,4 +116,3 @@ export function InviteApplicationDialog() {
     </Dialog>
   )
 }
-

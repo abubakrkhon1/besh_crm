@@ -111,11 +111,19 @@ export async function assignFuelCard(input: unknown) {
   const auth = await requireAdmin()
   if (!auth.user) return { ok: false, message: auth.error ?? 'Not authorized.' }
   const db = createAdminClient()
-  if (values.customerId) {
-    const { error } = await db.from('fuel_card_customer_mappings').upsert({ fuel_card_id: values.fuelCardId, customer_id: values.customerId, match_method: 'manual', match_confidence: 'confirmed', is_confirmed: true, confirmed_by: auth.user.id, confirmed_at: new Date().toISOString() }, { onConflict: 'fuel_card_id' })
-    if (error) return { ok: false, message: 'Assignment could not be saved.' }
-  } else await db.from('fuel_card_customer_mappings').delete().eq('fuel_card_id', values.fuelCardId)
-  await db.from('fuel_cards').update({ customer_id: values.customerId }).eq('id', values.fuelCardId)
+  const { error } = await db.rpc('assign_fuel_card_customer', {
+    p_fuel_card_id: values.fuelCardId,
+    p_customer_id: values.customerId,
+    p_confirmed_by: auth.user.id,
+  })
+  if (error) {
+    return {
+      ok: false,
+      message: error.code === '55000'
+        ? 'This card has a provider operation in progress. Wait for it to finish before changing the customer.'
+        : 'Assignment could not be saved.',
+    }
+  }
   revalidatePath('/crm/fuel-cards'); revalidatePath(`/crm/fuel-cards/${values.fuelCardId}`)
   return { ok: true, message: values.customerId ? 'Customer assignment saved.' : 'Customer assignment removed.' }
 }

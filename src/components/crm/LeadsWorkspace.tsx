@@ -17,6 +17,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { LeadAccountType, LeadStatus, Profile } from '@/types/database.types'
+import { createCsv } from '@/lib/csv'
 import { cn } from '@/lib/utils'
 import { getLeadFollowUpBucket, type LeadFollowUpBucket } from '@/lib/leads/follow-up'
 
@@ -409,17 +410,13 @@ function exportLeads(leads: LeadWithRepresentative[]) {
     lead.created_at,
     lead.estimated_monthly_gallons ?? '',
   ])
-  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')
+  const csv = createCsv([headers, ...rows])
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`
   anchor.click()
   URL.revokeObjectURL(url)
-}
-
-function csvCell(value: string | number) {
-  return `"${String(value).replaceAll('"', '""')}"`
 }
 
 function shortName(value: string) {
