@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { CreditCard, Gauge, LoaderCircle, RefreshCcw, Snowflake, TriangleAlert } from 'lucide-react'
+import { CreditCard, Gauge, KeyRound, LoaderCircle, RefreshCcw, Snowflake, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
-import { changeFuelCardStatus, issueFuelCard, loadWexCardOrderOptions, replaceFuelCard, setFuelCardLimits } from '@/app/actions/card-management'
+import { changeFuelCardPin, changeFuelCardStatus, issueFuelCard, loadWexCardOrderOptions, removeFuelCard, replaceFuelCard, setFuelCardLimits } from '@/app/actions/card-management'
 import type { WexAllowedOrderType } from '@/lib/integrations/wex/types'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogMedia, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
@@ -231,6 +231,17 @@ export function ReplaceFuelCardDialog({ cardId, cardLast4 }: { cardId: string; c
       </DialogContent>
     </Dialog>
   )
+}
+
+export function CardSecurityActions({ cardId }: { cardId: string }) {
+  const [pinOpen, setPinOpen] = useState(false); const [removeOpen, setRemoveOpen] = useState(false)
+  const [error, setError] = useState<string>(); const [pending, startTransition] = useTransition()
+  function pinSubmit(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const pin = String(new FormData(event.currentTarget).get('pin') ?? ''); startTransition(async () => { const result = await changeFuelCardPin({ fuelCardId: cardId, pin, idempotencyKey: crypto.randomUUID() }); if (!result.ok) return setError(result.message); toast.success(result.message); setPinOpen(false) }) }
+  function removeSubmit(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const confirmation = String(new FormData(event.currentTarget).get('confirmation') ?? ''); startTransition(async () => { const result = await removeFuelCard({ fuelCardId: cardId, confirmation, idempotencyKey: crypto.randomUUID() }); if (!result.ok) return setError(result.message); toast.success(result.message); setRemoveOpen(false) }) }
+  return <>
+    <Dialog open={pinOpen} onOpenChange={(v) => { setPinOpen(v); setError(undefined) }}><DialogTrigger render={<Button type="button" variant="outline" size="lg" />}><KeyRound data-icon="inline-start" />Change PIN</DialogTrigger><DialogContent><form onSubmit={pinSubmit}><DialogHeader><DialogTitle>Change card PIN</DialogTitle><DialogDescription>The PIN is sent directly to WEX and is never stored or logged by the CRM.</DialogDescription></DialogHeader><FieldGroup className="py-5"><Field><FieldLabel htmlFor="newCardPin">New PIN</FieldLabel><Input id="newCardPin" name="pin" type="password" inputMode="numeric" pattern="[0-9]{4,12}" minLength={4} maxLength={12} autoComplete="new-password" required /></Field>{error && <FieldError>{error}</FieldError>}</FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={() => setPinOpen(false)}>Cancel</Button><Button type="submit" disabled={pending}>Change PIN</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={removeOpen} onOpenChange={(v) => { setRemoveOpen(v); setError(undefined) }}><DialogTrigger render={<Button type="button" variant="destructive" size="lg" />}><Trash2 data-icon="inline-start" />Remove card</DialogTrigger><DialogContent><form onSubmit={removeSubmit}><DialogHeader><DialogTitle>Remove this card from WEX?</DialogTitle><DialogDescription>This provider action may be permanent. Type REMOVE to confirm.</DialogDescription></DialogHeader><FieldGroup className="py-5"><Field><FieldLabel htmlFor="removeConfirmation">Confirmation</FieldLabel><Input id="removeConfirmation" name="confirmation" autoComplete="off" required /></Field>{error && <FieldError>{error}</FieldError>}</FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={() => setRemoveOpen(false)}>Cancel</Button><Button type="submit" variant="destructive" disabled={pending}>Remove permanently</Button></DialogFooter></form></DialogContent></Dialog>
+  </>
 }
 
 export function IssueFuelCardDialog({ customers }: { customers: CustomerOption[] }) {

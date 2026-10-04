@@ -4,15 +4,15 @@ import { createHash, createHmac } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRoles } from '@/lib/supabase/server'
-import { cardLimitsActionSchema, cardOrderActionSchema, cardReplacementActionSchema, cardStatusActionSchema, validateWexEnvironment } from '@/lib/integrations/wex/schemas'
-import { createAndSubmitCardOrder, getAllowedOrderTypes, getCardRefreshingLimits, getCardSummariesV2, getCardV2, loginToWex, replaceWexCard, setCardRefreshingLimits, setCardV2 } from '@/lib/integrations/wex/client'
+import { cardLimitsActionSchema, cardOrderActionSchema, cardPinActionSchema, cardRemovalActionSchema, cardReplacementActionSchema, cardStatusActionSchema, validateWexEnvironment } from '@/lib/integrations/wex/schemas'
+import { createAndSubmitCardOrder, getAllowedOrderTypes, getCardRefreshingLimits, getCardSummariesV2, getCardV2, loginToWex, removeWexCard, replaceWexCard, setCardRefreshingLimits, setCardV2, setWexCardPin } from '@/lib/integrations/wex/client'
 import { WexError } from '@/lib/integrations/wex/errors'
 import type { WexAllowedOrderType } from '@/lib/integrations/wex/types'
 
 const CARD_MANAGEMENT_ROLES = ['owner', 'general_manager'] as const
 const CARD_ISSUER_ROLES = ['owner', 'general_manager'] as const
 type Db = ReturnType<typeof createAdminClient>
-type OperationType = 'freeze' | 'unfreeze' | 'set_limits' | 'issue' | 'replace_lost' | 'replace_stolen' | 'reissue_damaged'
+type OperationType = 'freeze' | 'unfreeze' | 'set_limits' | 'issue' | 'replace_lost' | 'replace_stolen' | 'reissue_damaged' | 'set_pin' | 'remove'
 
 export type CardManagementResult = {
   ok: boolean
@@ -454,6 +454,57 @@ export async function replaceFuelCard(input: unknown): Promise<CardManagementRes
     if (operationId) await finishOperation(db, operationId, {
       status: mutationSent ? 'needs_attention' : 'failed', errorCode: error instanceof WexError ? error.kind : 'INTERNAL', errorMessage: message,
     })
+    return { ok: false, operationId: operationId ?? undefined, message }
+  }
+}
+
+export async function changeFuelCardPin(input: unknown): Promise<CardManagementResult> {
+  const profile = await authorizeCardManager()
+  if (!profile) return { ok: false, message: 'You do not have permission to change card PINs.' }
+  const parsed = cardPinActionSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Enter a valid PIN.' }
+  const db = createAdminClient(); let operationId: string | null = null; let mutationSent = false
+  try {
+    const card = await authorizeCardTarget(db, profile, parsed.data.fuelCardId)
+    if (!card) return { ok: false, message: 'This fuel card is unavailable.' }
+    const started = await beginOperation(db, { idempotencyKey: parsed.data.idempotencyKey, type: 'set_pin', requestedBy: profile.auth_user_id, fuelCardId: card.id, customerId: card.customer_id, requestSummary: { pinChanged: true } })
+    operationId = String(started.operation.id); if (started.existing) return existingOperationResult(started.operation)
+    const clientId = await loginToWex(); const { providerCard } = await resolveProviderCard(db, card.id, clientId)
+    mutationSent = true; const confirmation = await setWexCardPin(clientId, providerCard.cardNumber, parsed.data.pin)
+    await finishOperation(db, operationId, { status: 'succeeded', resultSummary: { confirmed: true, providerMessage: confirmation } })
+    revalidateCardViews(card.id); return { ok: true, operationId, message: 'Card PIN changed in WEX.' }
+  } catch (error) {
+    const message = publicError(error, 'WEX could not change this card PIN.')
+    if (operationId) await finishOperation(db, operationId, { status: mutationSent ? 'needs_attention' : 'failed', errorCode: error instanceof WexError ? error.kind : 'INTERNAL', errorMessage: message })
+    return { ok: false, operationId: operationId ?? undefined, message }
+  }
+}
+
+export async function removeFuelCard(input: unknown): Promise<CardManagementResult> {
+  const profile = await authorizeCardManager()
+  if (!profile) return { ok: false, message: 'You do not have permission to remove cards.' }
+  const parsed = cardRemovalActionSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, message: 'Type REMOVE to confirm this permanent provider action.' }
+  const db = createAdminClient(); let operationId: string | null = null; let mutationSent = false
+  try {
+    const card = await authorizeCardTarget(db, profile, parsed.data.fuelCardId)
+    if (!card) return { ok: false, message: 'This fuel card is unavailable.' }
+    const started = await beginOperation(db, { idempotencyKey: parsed.data.idempotencyKey, type: 'remove', requestedBy: profile.auth_user_id, fuelCardId: card.id, customerId: card.customer_id, requestSummary: { permanent: true } })
+    operationId = String(started.operation.id); if (started.existing) return existingOperationResult(started.operation)
+    const clientId = await loginToWex(); const { providerCard } = await resolveProviderCard(db, card.id, clientId)
+    mutationSent = true; await removeWexCard(clientId, providerCard.cardNumber)
+    const remaining = await getCardSummariesV2(clientId)
+    const stillPresent = remaining.some((item) => fingerprintCard(item.cardNumber) === fingerprintCard(providerCard.cardNumber))
+    if (stillPresent) {
+      await finishOperation(db, operationId, { status: 'needs_attention', errorCode: 'READBACK_MISMATCH', errorMessage: 'WEX accepted removal but the card remains in inventory.' })
+      return { ok: false, operationId, message: 'WEX did not confirm removal. The operation was marked for review.' }
+    }
+    await db.from('fuel_cards').update({ status: 'REMOVED', last_synced_at: new Date().toISOString() }).eq('id', card.id)
+    await finishOperation(db, operationId, { status: 'succeeded', resultSummary: { removed: true } })
+    revalidateCardViews(card.id); return { ok: true, operationId, message: 'Card removed from WEX.' }
+  } catch (error) {
+    const message = publicError(error, 'WEX could not remove this card.')
+    if (operationId) await finishOperation(db, operationId, { status: mutationSent ? 'needs_attention' : 'failed', errorCode: error instanceof WexError ? error.kind : 'INTERNAL', errorMessage: message })
     return { ok: false, operationId: operationId ?? undefined, message }
   }
 }

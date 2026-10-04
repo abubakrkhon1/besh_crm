@@ -33,6 +33,13 @@ export function assertNoSoapFault(xml: string) {
   bodyOf(xml)
 }
 
+export function parseStringMutationResponse(xml: string, operation: 'setCardPin') {
+  const result = valueOf(bodyOf(xml)?.[`${operation}Response`]?.result)
+  if (!result) throw new WexError('WEX returned no confirmation.', 'validation')
+  if (/error|invalid|fail|denied/i.test(result)) throw new WexError(safeProviderMessage(result), 'provider_rejected')
+  return result
+}
+
 function valueOf(value: unknown): string | null {
   if (value == null || typeof value === 'object') return null
   const text = String(value).trim()

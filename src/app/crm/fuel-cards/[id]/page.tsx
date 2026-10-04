@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Building2, CheckCircle2, CreditCard, History, Mail, Phone, RefreshCw, ShieldCheck, Truck, UserRound } from 'lucide-react'
 import { CustomerAssignment } from '@/components/crm/CustomerAssignment'
-import { FuelCardLimitsDialog, FuelCardStatusControl, ReplaceFuelCardDialog } from '@/components/crm/FuelCardManagementControls'
+import { CardSecurityActions, FuelCardLimitsDialog, FuelCardStatusControl, ReplaceFuelCardDialog } from '@/components/crm/FuelCardManagementControls'
 import { FuelCardSyncButton } from '@/components/crm/FuelCardControls'
 import { PaginatedTable } from '@/components/crm/ui/PaginatedTable'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -79,6 +79,7 @@ export default async function FuelCardPage({ params }: { params: Promise<{ id: s
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {canManageCards && <FuelCardStatusControl cardId={card.id} status={card.status} />}
           {canManageCards && <ReplaceFuelCardDialog cardId={card.id} cardLast4={card.card_last4} />}
+          {canManageCards && <CardSecurityActions cardId={card.id} />}
           {canManageCards && <FuelCardLimitsDialog cardId={card.id} current={{
             dailyAmount: nullableNumber(card.daily_limit), weeklyAmount: nullableNumber(card.weekly_limit), monthlyAmount: nullableNumber(card.monthly_limit),
             dailyTransactions: nullableNumber(card.daily_transaction_limit), weeklyTransactions: nullableNumber(card.weekly_transaction_limit), monthlyTransactions: nullableNumber(card.monthly_transaction_limit),

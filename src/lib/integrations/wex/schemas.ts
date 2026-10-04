@@ -127,6 +127,8 @@ export const cardReplacementActionSchema = z.object({
   rushProcessing: z.boolean(),
   reason: z.string().trim().min(1).max(100),
 })
+export const cardPinActionSchema = z.object({ fuelCardId: z.string().uuid(), idempotencyKey: z.string().uuid(), pin: z.string().regex(/^\d{4,12}$/, 'PIN must contain 4–12 digits.') })
+export const cardRemovalActionSchema = z.object({ fuelCardId: z.string().uuid(), idempotencyKey: z.string().uuid(), confirmation: z.literal('REMOVE') })
 export const fuelCardQuerySchema = z.object({
   q: z.string().trim().max(100).catch(''), status: z.string().trim().max(50).catch(''),
   match: z.enum(['all', 'matched', 'unmatched']).catch('all'),

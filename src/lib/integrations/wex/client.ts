@@ -3,7 +3,7 @@ import 'server-only'
 import { ProxyAgent } from 'undici'
 import { WexError } from './errors'
 import { wexEnvSchema } from './schemas'
-import { assertNoSoapFault, envelope, escapeXml, parseAccountTransactionsV3, parseAllowedOrderTypes, parseCardRefreshingLimits, parseCardSummaries, parseCardV2, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin, parseMutationResponse, serializeCardOrder, serializeCardV2, serializeRefreshingLimits, serializeReplacementCardOrder } from './soap'
+import { assertNoSoapFault, envelope, escapeXml, parseAccountTransactionsV3, parseAllowedOrderTypes, parseCardRefreshingLimits, parseCardSummaries, parseCardV2, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin, parseMutationResponse, parseStringMutationResponse, serializeCardOrder, serializeCardV2, serializeRefreshingLimits, serializeReplacementCardOrder } from './soap'
 import type { WexCardOrder, WexCardRefreshingLimits, WexCardV2, WexReplacementCardOrder } from './types'
 
 const MAX_WEX_XML_RESPONSE_BYTES = 15 * 1024 * 1024
@@ -109,4 +109,14 @@ export async function replaceWexCard(clientId: string, order: WexReplacementCard
   const operation = damaged ? 'reissueDamagedCard' : 'replaceLostOrStolenCard'
   const body = `<ns:${operation}><clientId>${escapeXml(clientId)}</clientId><data>${serializeReplacementCardOrder(order)}</data></ns:${operation}>`
   return parseMutationResponse(await post(envelope(body), { retry: false }), operation)
+}
+
+export async function setWexCardPin(clientId: string, cardNumber: string, pin: string) {
+  const body = `<ns:setCardPin><clientId>${escapeXml(clientId)}</clientId><cardNum>${escapeXml(cardNumber)}</cardNum><newPin>${escapeXml(pin)}</newPin></ns:setCardPin>`
+  return parseStringMutationResponse(await post(envelope(body), { retry: false }), 'setCardPin')
+}
+
+export async function removeWexCard(clientId: string, cardNumber: string) {
+  const xml = await post(envelope(`<ns:removeCard><clientId>${escapeXml(clientId)}</clientId><cardNumber>${escapeXml(cardNumber)}</cardNumber></ns:removeCard>`), { retry: false })
+  assertNoSoapFault(xml)
 }
