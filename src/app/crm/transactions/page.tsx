@@ -106,22 +106,22 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
 
   const previousDuration = Date.parse(range.rangeEnd) - Date.parse(range.rangeStart)
   const previousStart = new Date(Date.parse(range.rangeStart) - previousDuration).toISOString()
-  const [tableResult, periodResult, previousResult, customerResult, cardResult] = await Promise.all([
+  const [tableResult, summaryResult, customerResult, cardResult] = await Promise.all([
     tableQuery.order('transaction_date', { ascending: false }).range(offset, offset + pageSize - 1),
-    db.from('fuel_transactions').select(transactionSelect).eq('provider', 'wex_efs').gte('transaction_date', range.rangeStart).lt('transaction_date', range.rangeEnd).order('transaction_date').range(0, 9_999),
-    db.from('fuel_transactions').select('amount,savings,gallons,status').eq('provider', 'wex_efs').gte('transaction_date', previousStart).lt('transaction_date', range.rangeStart).range(0, 9_999),
+    db.rpc('get_transaction_period_summary', {
+      p_provider: 'wex_efs', p_range_start: range.rangeStart,
+      p_range_end: range.rangeEnd, p_previous_start: previousStart,
+    }),
     db.from('customers').select('id,company_name,contact_name').order('company_name').range(0, 9_999),
     db.from('fuel_cards').select('id,card_last4,driver_name').eq('provider', 'wex_efs').order('card_last4').range(0, 9_999),
   ])
 
   const transactions = (tableResult.data ?? []) as TransactionRow[]
-  const periodTransactions = (periodResult.data ?? []) as TransactionRow[]
-  const previousTransactions = previousResult.data ?? []
   const customers = (customerResult.data ?? []).map((customer) => ({ value: customer.id, label: customer.company_name ?? customer.contact_name ?? 'Unnamed customer' }))
   const cards = (cardResult.data ?? []).map((card) => ({ value: card.id, label: `•••• ${card.card_last4}${card.driver_name ? ` · ${card.driver_name}` : ''}` }))
-  const statuses = [...new Set(periodTransactions.map((transaction) => transaction.status).filter(Boolean))].sort()
-  const fuelTypes = [...new Set(periodTransactions.map((transaction) => transaction.provider_transaction_type).filter((value): value is string => Boolean(value)))].sort()
-  const summary = buildSummary(periodTransactions, previousTransactions, cardResult.data?.length ?? 0)
+  const summary = buildSummaryFromAggregate(summaryResult.data)
+  const statuses = summary.statuses.map((item) => item.status).sort()
+  const fuelTypes = summary.fuelTypes
   const exportParams = new URLSearchParams({ from: range.from, to: range.to })
   Object.entries({ q, status, customer: customerId, card: cardId, fuelType }).forEach(([key, value]) => { if (value) exportParams.set(key, value) })
 
@@ -320,83 +320,56 @@ function FlagRow({ label, value }: { label: string; value: number }) {
   return <div className="flex items-center justify-between gap-3 text-xs"><span>{label}</span><span className="font-semibold tabular-nums">{value.toLocaleString()}</span></div>
 }
 
-function buildSummary(transactions: TransactionRow[], previous: Array<{ amount: number; savings: number; gallons: number | null; status: string }>, cardCount: number) {
-  const spending = transactions.reduce((sum, transaction) => sum + Number(transaction.amount ?? 0), 0)
-  const savings = transactions.reduce((sum, transaction) => sum + Number(transaction.savings ?? 0), 0)
-  const gallons = transactions.reduce((sum, transaction) => sum + Number(transaction.gallons ?? 0), 0)
-  const previousSpending = previous.reduce((sum, transaction) => sum + Number(transaction.amount ?? 0), 0)
-  const previousSavings = previous.reduce((sum, transaction) => sum + Number(transaction.savings ?? 0), 0)
-  const previousGallons = previous.reduce((sum, transaction) => sum + Number(transaction.gallons ?? 0), 0)
-  const averageTicket = transactions.length ? spending / transactions.length : 0
-  const previousAverageTicket = previous.length ? previousSpending / previous.length : 0
-  const statusMap = new Map<string, number>()
-  const merchantMap = new Map<string, number>()
-  const customerMap = new Map<string, { id: string; name: string; amount: number }>()
-  const dailyMap = new Map<string, { count: number; spending: number; savings: number; gallons: number }>()
-  const activeCardIds = new Set<string>()
+type NumericStats = { total: number; spending: number | string; savings: number | string; gallons: number | string; average_ticket: number | string }
+type TransactionSummaryAggregate = {
+  current: NumericStats
+  previous: NumericStats
+  daily: Array<{ date: string; count: number; spending: number | string; savings: number | string; gallons: number | string; average_ticket: number | string }>
+  statuses: Array<{ status: string; count: number }>
+  fuelTypes: string[]
+  topMerchants: Array<{ name: string; amount: number | string }>
+  topCustomers: Array<{ id: string; name: string; amount: number | string }>
+  flags: { reversed: number; highTicket: number; unmatched: number; cardsWithoutActivity: number }
+  recentExceptions: Array<{ id: string; type: string; detail: string; date: string; amount: number | string; tone: 'warning' | 'danger' }>
+}
 
-  for (const transaction of transactions) {
-    statusMap.set(transaction.status, (statusMap.get(transaction.status) ?? 0) + 1)
-    const merchant = transaction.merchant_name?.trim() || 'Unknown merchant'
-    merchantMap.set(merchant, (merchantMap.get(merchant) ?? 0) + Number(transaction.amount ?? 0))
-    if (transaction.fuel_card_id) activeCardIds.add(transaction.fuel_card_id)
-    if (transaction.customer_id) {
-      const customer = oneRelation(transaction.customers)
-      const item = customerMap.get(transaction.customer_id) ?? { id: transaction.customer_id, name: String(customer?.company_name ?? customer?.contact_name ?? 'Customer'), amount: 0 }
-      item.amount += Number(transaction.amount ?? 0)
-      customerMap.set(transaction.customer_id, item)
-    }
-    const day = transaction.transaction_date.slice(0, 10)
-    const daily = dailyMap.get(day) ?? { count: 0, spending: 0, savings: 0, gallons: 0 }
-    daily.count += 1
-    daily.spending += Number(transaction.amount ?? 0)
-    daily.savings += Number(transaction.savings ?? 0)
-    daily.gallons += Number(transaction.gallons ?? 0)
-    dailyMap.set(day, daily)
-  }
-
-  const highTicketThreshold = Math.max(500, averageTicket * 2)
-  const reversed = transactions.filter((transaction) => transaction.status.toLowerCase() === 'reversed').length
-  const highTicket = transactions.filter((transaction) => Number(transaction.amount) >= highTicketThreshold).length
-  const unmatched = transactions.filter((transaction) => !transaction.customer_id).length
-  const cardsWithoutActivity = Math.max(0, cardCount - activeCardIds.size)
-  const flagged = [...transactions]
-    .filter((transaction) => transaction.status.toLowerCase() === 'reversed' || !transaction.customer_id || Number(transaction.amount) >= highTicketThreshold)
-    .sort((a, b) => Date.parse(b.transaction_date) - Date.parse(a.transaction_date))
-    .slice(0, 3)
-    .map((transaction) => {
-      const fuelCard = oneRelation(transaction.fuel_cards)
-      const isReversed = transaction.status.toLowerCase() === 'reversed'
-      const isUnmatched = !transaction.customer_id
-      return {
-        id: transaction.id,
-        type: isReversed ? 'Reversed transaction' : isUnmatched ? 'Unmatched transaction' : 'High ticket transaction',
-        detail: transaction.merchant_name ?? `Card ending ${String(fuelCard?.card_last4 ?? '—')}`,
-        date: transaction.transaction_date,
-        amount: Number(transaction.amount),
-        tone: isUnmatched ? 'warning' as const : 'danger' as const,
-      }
-    })
-
+function buildSummaryFromAggregate(value: unknown) {
+  const aggregate = (value ?? {
+    current: { total: 0, spending: 0, savings: 0, gallons: 0, average_ticket: 0 },
+    previous: { total: 0, spending: 0, savings: 0, gallons: 0, average_ticket: 0 },
+    daily: [], statuses: [], fuelTypes: [], topMerchants: [], topCustomers: [],
+    flags: { reversed: 0, highTicket: 0, unmatched: 0, cardsWithoutActivity: 0 }, recentExceptions: [],
+  }) as TransactionSummaryAggregate
+  const current = aggregate.current
+  const previous = aggregate.previous
+  const spending = Number(current.spending)
+  const savings = Number(current.savings)
+  const gallons = Number(current.gallons)
+  const averageTicket = Number(current.average_ticket)
+  const flags = aggregate.flags
   return {
-    total: transactions.length,
+    total: current.total,
     spending,
     savings,
     gallons,
     averageTicket,
     trends: {
-      total: percentChange(transactions.length, previous.length),
-      spending: percentChange(spending, previousSpending),
-      savings: percentChange(savings, previousSavings),
-      gallons: percentChange(gallons, previousGallons),
-      averageTicket: percentChange(averageTicket, previousAverageTicket),
+      total: percentChange(current.total, previous.total),
+      spending: percentChange(spending, Number(previous.spending)),
+      savings: percentChange(savings, Number(previous.savings)),
+      gallons: percentChange(gallons, Number(previous.gallons)),
+      averageTicket: percentChange(averageTicket, Number(previous.average_ticket)),
     },
-    daily: [...dailyMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, item]) => ({ date, ...item, averageTicket: item.count ? item.spending / item.count : 0 })),
-    statuses: [...statusMap.entries()].map(([itemStatus, count]) => ({ status: itemStatus, count })).sort((a, b) => b.count - a.count),
-    topMerchants: [...merchantMap.entries()].map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount).slice(0, 5),
-    topCustomers: [...customerMap.values()].sort((a, b) => b.amount - a.amount).slice(0, 5),
-    flags: { reversed, highTicket, unmatched, cardsWithoutActivity, total: reversed + highTicket + unmatched + cardsWithoutActivity },
-    recentExceptions: flagged,
+    daily: aggregate.daily.map((item) => ({
+      date: item.date, count: item.count, spending: Number(item.spending), savings: Number(item.savings),
+      gallons: Number(item.gallons), averageTicket: Number(item.average_ticket),
+    })),
+    statuses: aggregate.statuses,
+    fuelTypes: aggregate.fuelTypes,
+    topMerchants: aggregate.topMerchants.map((item) => ({ ...item, amount: Number(item.amount) })),
+    topCustomers: aggregate.topCustomers.map((item) => ({ ...item, amount: Number(item.amount) })),
+    flags: { ...flags, total: flags.reversed + flags.highTicket + flags.unmatched + flags.cardsWithoutActivity },
+    recentExceptions: aggregate.recentExceptions.map((item) => ({ ...item, amount: Number(item.amount) })),
   }
 }
 
