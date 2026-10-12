@@ -36,10 +36,12 @@ export async function GET(request: Request) {
     admin.from('fuel_cards')
       .select('id,card_last4,status,unit_number,policy_number,daily_limit,weekly_limit,monthly_limit,gallon_limit,last_synced_at')
       .eq('driver_id', driver.id)
+      .eq('customer_id', driver.customer_id)
       .order('status', { ascending: true }),
     admin.from('fuel_transactions')
       .select('id,provider_transaction_id,transaction_date,status,merchant_name,merchant_address,merchant_city,merchant_state,merchant_zip,gallons,amount,savings,provider_transaction_type,fuel_cards(card_last4)')
       .eq('driver_id', driver.id)
+      .eq('customer_id', driver.customer_id)
       .order('transaction_date', { ascending: false })
       .limit(50),
   ])
