@@ -32,7 +32,17 @@ type FuelCardRow = {
   customers: { company_name: string | null; contact_name: string | null } | Array<{ company_name: string | null; contact_name: string | null }> | null
 }
 
-type SummaryCard = FuelCardRow & { customers: FuelCardRow['customers'] }
+type IssueCard = Pick<FuelCardRow, 'id' | 'card_last4' | 'last_synced_at'>
+type FuelCardInventorySummary = {
+  statusDistribution: Array<{ status: string; count: number }>
+  policies: string[]
+  customers: Array<{ id: string; name: string; count: number }>
+  assignedDrivers: number
+  unmatchedCount: number
+  missingDriverCount: number
+  overriddenCount: number
+  issueSamples: { unmatched: IssueCard | null; missing_driver: IssueCard | null; overridden: IssueCard | null }
+}
 
 type WexSyncStateRow = {
   resource: WexSyncResource
@@ -70,7 +80,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
 
   const [cardsResult, summaryResult, syncStateResult, failedRunsResult, transactionStats, activityResult, alertsResult, profile, operationsResult] = await Promise.all([
     cardQuery.range(offset, offset + params.pageSize - 1),
-    db.from('fuel_cards').select('id,card_last4,customer_id,driver_name,external_driver_id,unit_number,status,policy_number,is_overridden,last_synced_at,customers(company_name,contact_name)', { count: 'exact' }).eq('provider', 'wex_efs').range(0, 9_999),
+    db.rpc('get_fuel_card_inventory_summary'),
     db.from('wex_sync_state').select('resource,last_succeeded_at').eq('provider', 'wex_efs').in('resource', ['transactions', 'account', 'reconciliation']),
     db.from('fuel_card_sync_runs').select('id,started_at,completed_at,error_message').eq('provider', 'wex_efs').eq('status', 'failed').order('started_at', { ascending: false }).limit(3),
     getGeneralManagerDashboard(range.rangeStart, range.rangeEnd),
@@ -81,19 +91,17 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
   ])
 
   const cards = (cardsResult.data ?? []) as FuelCardRow[]
-  const summaryCards = (summaryResult.data ?? []) as SummaryCard[]
-  const statuses = [...new Set(summaryCards.map((card) => card.status).filter(Boolean))].sort()
-  const policies = [...new Set(summaryCards.map((card) => card.policy_number).filter((value): value is string => Boolean(value)))].sort()
-  const customers = buildCustomers(summaryCards)
+  const summary = (summaryResult.data ?? {
+    statusDistribution: [], policies: [], customers: [], assignedDrivers: 0,
+    unmatchedCount: 0, missingDriverCount: 0, overriddenCount: 0,
+    issueSamples: { unmatched: null, missing_driver: null, overridden: null },
+  }) as FuelCardInventorySummary
+  const statuses = summary.statusDistribution.map((row) => row.status).sort()
+  const policies = summary.policies
+  const customers = summary.customers
   const canManageCards = profile != null && ['owner', 'general_manager'].includes(profile.role)
-  const statusDistribution = buildStatusDistribution(summaryCards)
-  const assignedDrivers = new Set(summaryCards
-    .filter((card) => card.external_driver_id || card.driver_name)
-    .map((card) => card.external_driver_id ?? card.driver_name?.trim().toLowerCase()))
-    .size
-  const unmatchedCards = summaryCards.filter((card) => !card.customer_id)
-  const missingDrivers = summaryCards.filter((card) => !card.external_driver_id && !card.driver_name)
-  const overriddenCards = summaryCards.filter((card) => card.is_overridden)
+  const statusDistribution = summary.statusDistribution
+  const assignedDrivers = summary.assignedDrivers
   const syncState = new Map(
     ((syncStateResult.data ?? []) as WexSyncStateRow[]).map((state) => [state.resource, state.last_succeeded_at]),
   )
@@ -136,7 +144,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
             <FuelCardMetric title="Active cards" value={statusCount(statusDistribution, 'active')} detail="Current inventory" icon={<CreditCard />} tone="green" />
             <FuelCardMetric title="Frozen cards" value={statusCount(statusDistribution, 'frozen')} detail="Current inventory" icon={<Snowflake />} tone="violet" />
             <FuelCardMetric title="Assigned drivers" value={assignedDrivers} detail="Unique card assignments" icon={<UserRound />} tone="blue" />
-            <FuelCardMetric title="Unmatched cards" value={unmatchedCards.length} detail="Need a customer match" icon={<Link2Off />} tone="orange" />
+            <FuelCardMetric title="Unmatched cards" value={summary.unmatchedCount} detail="Need a customer match" icon={<Link2Off />} tone="orange" />
             <FuelCardMetric title="Period spend" value={formatCurrency(transactionStats?.spending)} detail="Selected date range" icon={<DollarSign />} tone="green" />
             <FuelCardMetric title="Period savings" value={formatCurrency(transactionStats?.savings)} detail="Selected date range" icon={<Tag />} tone="violet" />
           </div>
@@ -243,14 +251,14 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
             <CardHeader>
               <CardTitle>Recent sync issues</CardTitle>
               <CardDescription>Live exceptions that may need review.</CardDescription>
-              <CardAction><Badge variant="destructive">{unmatchedCards.length + missingDrivers.length + overriddenCards.length + (failedRunsResult.data?.length ?? 0)}</Badge></CardAction>
+              <CardAction><Badge variant="destructive">{summary.unmatchedCount + summary.missingDriverCount + summary.overriddenCount + (failedRunsResult.data?.length ?? 0)}</Badge></CardAction>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              {unmatchedCards.slice(0, 1).map((card) => <SyncIssue key={`match-${card.id}`} icon={<Link2Off />} title="Unmatched card" description={`Card ending in ${card.card_last4 ?? '—'} could not be matched to a customer.`} date={card.last_synced_at} />)}
-              {missingDrivers.slice(0, 1).map((card) => <SyncIssue key={`driver-${card.id}`} icon={<UserRoundX />} title="Driver not found" description={`No driver assignment is available for card ending in ${card.card_last4 ?? '—'}.`} date={card.last_synced_at} />)}
-              {overriddenCards.slice(0, 1).map((card) => <SyncIssue key={`override-${card.id}`} icon={<AlertTriangle />} title="Manual override" description={`Card ending in ${card.card_last4 ?? '—'} is currently overridden.`} date={card.last_synced_at} />)}
-              {(failedRunsResult.data ?? []).slice(0, Math.max(0, 3 - Number(Boolean(unmatchedCards.length)) - Number(Boolean(missingDrivers.length)) - Number(Boolean(overriddenCards.length)))).map((run) => <SyncIssue key={run.id} icon={<AlertTriangle />} title="Synchronization failed" description={run.error_message ?? 'WEX synchronization did not complete.'} date={run.completed_at ?? run.started_at} />)}
-              {!unmatchedCards.length && !missingDrivers.length && !overriddenCards.length && !failedRunsResult.data?.length && <p className="py-6 text-center text-sm text-muted-foreground">No current sync issues.</p>}
+              {summary.issueSamples.unmatched && <SyncIssue icon={<Link2Off />} title="Unmatched card" description={`Card ending in ${summary.issueSamples.unmatched.card_last4 ?? '—'} could not be matched to a customer.`} date={summary.issueSamples.unmatched.last_synced_at} />}
+              {summary.issueSamples.missing_driver && <SyncIssue icon={<UserRoundX />} title="Driver not found" description={`No driver assignment is available for card ending in ${summary.issueSamples.missing_driver.card_last4 ?? '—'}.`} date={summary.issueSamples.missing_driver.last_synced_at} />}
+              {summary.issueSamples.overridden && <SyncIssue icon={<AlertTriangle />} title="Manual override" description={`Card ending in ${summary.issueSamples.overridden.card_last4 ?? '—'} is currently overridden.`} date={summary.issueSamples.overridden.last_synced_at} />}
+              {(failedRunsResult.data ?? []).slice(0, Math.max(0, 3 - Number(Boolean(summary.unmatchedCount)) - Number(Boolean(summary.missingDriverCount)) - Number(Boolean(summary.overriddenCount)))).map((run) => <SyncIssue key={run.id} icon={<AlertTriangle />} title="Synchronization failed" description={run.error_message ?? 'WEX synchronization did not complete.'} date={run.completed_at ?? run.started_at} />)}
+              {!summary.unmatchedCount && !summary.missingDriverCount && !summary.overriddenCount && !failedRunsResult.data?.length && <p className="py-6 text-center text-sm text-muted-foreground">No current sync issues.</p>}
             </CardContent>
           </Card>
 
@@ -367,25 +375,9 @@ function SyncIssue({ icon, title, description, date }: { icon: React.ReactNode; 
   return <div className="flex gap-3"><div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive [&_svg]:size-4">{icon}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-sm font-semibold">{title}</p><LocalDateTime className="shrink-0 text-[10px] text-muted-foreground" value={date} variant="compact" /></div><p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p></div></div>
 }
 
-function buildStatusDistribution(cards: SummaryCard[]) {
-  const counts = new Map<string, number>()
-  cards.forEach((card) => counts.set(normalizeStatus(card.status), (counts.get(normalizeStatus(card.status)) ?? 0) + 1))
-  return [...counts.entries()].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count)
-}
-
 function statusCount(rows: Array<{ status: string; count: number }>, status: string) {
   if (status === 'frozen') return rows.filter((row) => row.status === 'frozen' || row.status === 'inactive').reduce((sum, row) => sum + row.count, 0)
   return rows.find((row) => row.status === status)?.count ?? 0
-}
-
-function buildCustomers(cards: SummaryCard[]) {
-  const customers = new Map<string, { id: string; name: string; count: number }>()
-  cards.forEach((card) => {
-    if (!card.customer_id) return
-    const current = customers.get(card.customer_id)
-    customers.set(card.customer_id, { id: card.customer_id, name: customerName(card.customers), count: (current?.count ?? 0) + 1 })
-  })
-  return [...customers.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
 }
 
 function customerName(relation: FuelCardRow['customers']) {
