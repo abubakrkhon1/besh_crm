@@ -53,34 +53,43 @@ export default async function CustomerPage({
   const { id } = await params
   const query = await searchParams
   const db = await createClient()
-  const profile = await getCurrentProfile()
   const section = sections.includes(query.view as CustomerSection)
     ? (query.view as CustomerSection)
     : "fuel-cards"
 
-  const { data: customer } = await db
-    .from("customers")
-    .select("id,company_name,contact_name,email,phone,status,current_balance,monthly_spend,lifetime_spend,credit_limit,notes,wex_carrier_id,last_synced_at")
-    .eq("id", id)
-    .single()
+  const spendStart = new Date()
+  spendStart.setHours(0, 0, 0, 0)
+  spendStart.setDate(spendStart.getDate() - 30)
+
+  const [profile, customerResult, portalAdminResult, recentTransactionResult, transactionCountResult, dailySpendResult] = await Promise.all([
+    getCurrentProfile(),
+    db.from("customers")
+      .select("id,company_name,contact_name,email,phone,status,current_balance,monthly_spend,lifetime_spend,credit_limit,notes,wex_carrier_id,last_synced_at")
+      .eq("id", id)
+      .single(),
+    db.from("profiles")
+      .select("full_name,email,is_active")
+      .eq("customer_id", id)
+      .eq("role", "customer_admin")
+      .limit(1)
+      .maybeSingle(),
+    db.from("fuel_transactions")
+      .select("id,transaction_date,amount,merchant_name,merchant_state,fuel_cards(card_last4,driver_name)")
+      .eq("customer_id", id)
+      .order("transaction_date", { ascending: false })
+      .limit(5),
+    db.from("fuel_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("customer_id", id),
+    db.rpc("get_customer_daily_spend", { p_customer_id: id, p_start_date: spendStart.toISOString() }),
+  ])
+  const customer = customerResult.data
 
   if (!customer) notFound()
 
-  const { data: portalAdmin } = await db
-    .from("profiles")
-    .select("full_name,email,is_active")
-    .eq("customer_id", id)
-    .eq("role", "customer_admin")
-    .limit(1)
-    .maybeSingle()
-
-  const { data: transactionData, count: transactionCount } = await db
-    .from("fuel_transactions")
-    .select("id,transaction_date,amount,merchant_name,merchant_state,fuel_cards(card_last4,driver_name)", { count: "exact" })
-    .eq("customer_id", id)
-    .order("transaction_date", { ascending: false })
-    .limit(200)
-  const recentTransactions = transactionData?.slice(0, 5) ?? []
+  const portalAdmin = portalAdminResult.data
+  const recentTransactions = recentTransactionResult.data ?? []
+  const transactionCount = transactionCountResult.count ?? 0
 
   const name = customer.company_name ?? customer.contact_name ?? "Customer"
   const status = (customer.status ?? "active").toLowerCase()
@@ -105,15 +114,15 @@ export default async function CustomerPage({
     .join("")
 
   const spendDays = Array.from({ length: 31 }, (_, index) => {
-    const date = new Date()
-    date.setHours(0, 0, 0, 0)
-    date.setDate(date.getDate() - (30 - index))
+    const date = new Date(spendStart)
+    date.setDate(date.getDate() + index)
     return { date: date.toISOString().slice(0, 10), amount: 0 }
   })
   const spendMap = new Map(spendDays.map((day) => [day.date, day]))
-  transactionData?.forEach((transaction) => {
-    const day = spendMap.get(transaction.transaction_date.slice(0, 10))
-    if (day) day.amount += Number(transaction.amount ?? 0)
+  const dailySpend = dailySpendResult.data as Array<{ spend_date: string; amount: number | string }> | null
+  dailySpend?.forEach((daily) => {
+    const day = spendMap.get(daily.spend_date)
+    if (day) day.amount = Number(daily.amount ?? 0)
   })
 
   return (
