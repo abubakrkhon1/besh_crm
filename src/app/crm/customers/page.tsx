@@ -17,7 +17,15 @@ type CustomerRow = {
   id: string; company_name: string | null; contact_name: string | null; email: string | null; phone: string | null; status: string; wex_carrier_id: string | null; wex_company_xref: string | null; last_synced_at: string | null; monthly_spend: number | null; fuel_cards: Array<{ count: number }>; fuel_transactions: Array<{ count: number }>
 }
 
-type CustomerSummaryRow = Pick<CustomerRow, 'id' | 'company_name' | 'contact_name' | 'status' | 'last_synced_at' | 'monthly_spend' | 'fuel_cards'>
+type CustomerInventorySummary = {
+  totalCustomers: number
+  totalCards: number
+  monthlySpend: number | string
+  latestSync: string | null
+  synchronizedCustomers: number
+  statusCounts: Array<{ status: string; count: number }>
+  topCustomers: Array<Pick<CustomerRow, 'id' | 'company_name' | 'contact_name' | 'monthly_spend'>>
+}
 
 // Avatar circle with initials
 function CustomerAvatar({ name, status }: { name: string; status: string }) {
@@ -48,17 +56,20 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const db = await createClient()
   const staleDate = new Date(); staleDate.setUTCDate(staleDate.getUTCDate() - 30); const staleCutoff = staleDate.toISOString()
 
-  const { data: summaryData } = await db.from('customers').select('id,company_name,contact_name,status,last_synced_at,monthly_spend,fuel_cards(count)').range(0, 9_999)
-  const summary = (summaryData ?? []) as CustomerSummaryRow[]
-  const statuses = [...new Set(summary.map((c) => c.status).filter(Boolean))].sort()
-  const statusCounts = buildStatusCounts(summary)
+  const { data: summaryData } = await db.rpc('get_customer_inventory_summary')
+  const summary = (summaryData ?? {
+    totalCustomers: 0, totalCards: 0, monthlySpend: 0, latestSync: null,
+    synchronizedCustomers: 0, statusCounts: [], topCustomers: [],
+  }) as CustomerInventorySummary
+  const statusCounts = summary.statusCounts
+  const statuses = statusCounts.map((item) => item.status).sort()
   const activeCustomers = statusCounts.find((item) => item.status === 'active')?.count ?? 0
-  const totalCards = summary.reduce((sum, c) => sum + (c.fuel_cards?.[0]?.count ?? 0), 0)
-  const monthlySpend = summary.reduce((sum, c) => sum + Number(c.monthly_spend ?? 0), 0)
-  const topCustomers = [...summary].sort((a, b) => Number(b.monthly_spend ?? 0) - Number(a.monthly_spend ?? 0)).slice(0, 5)
-  const latestSync = summary.map((c) => c.last_synced_at).filter((v): v is string => Boolean(v)).sort().at(-1)
-  const synchronizedCustomers = summary.filter((customer) => Boolean(customer.last_synced_at)).length
-  const unsynchronizedCustomers = summary.length - synchronizedCustomers
+  const totalCards = summary.totalCards
+  const monthlySpend = Number(summary.monthlySpend)
+  const topCustomers = summary.topCustomers
+  const latestSync = summary.latestSync
+  const synchronizedCustomers = summary.synchronizedCustomers
+  const unsynchronizedCustomers = summary.totalCustomers - synchronizedCustomers
 
   let customerQuery: any = db.from('customers').select('id,company_name,contact_name,email,phone,status,wex_carrier_id,wex_company_xref,last_synced_at,monthly_spend,fuel_cards(count),fuel_transactions(count)', { count: 'exact' })
   if (q) {
@@ -83,7 +94,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <CustomerMetricCard
           title="Total Customers"
-          value={summary.length}
+          value={summary.totalCustomers}
           description="Current customer records"
           icon={<Users className="size-5" />}
           iconClass="text-status-new-foreground"
@@ -91,7 +102,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <CustomerMetricCard
           title="Active Customers"
           value={activeCustomers}
-          description={`${summary.length ? Math.round(activeCustomers / summary.length * 100) : 0}% of customers`}
+          description={`${summary.totalCustomers ? Math.round(activeCustomers / summary.totalCustomers * 100) : 0}% of customers`}
           icon={<UserCheck className="size-5" />}
           iconClass="text-status-success-foreground"
         />
@@ -323,12 +334,6 @@ function SyncLine({ label, value, tone }: { label: string; value: React.ReactNod
       </div>
     </div>
   )
-}
-
-function buildStatusCounts(customers: Array<Pick<CustomerRow, 'status'>>) {
-  const counts = new Map<string, number>()
-  customers.forEach((c) => { const s = c.status.toLowerCase(); counts.set(s, (counts.get(s) ?? 0) + 1) })
-  return [...counts.entries()].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count)
 }
 
 function formatLabel(value: string) { return value.replaceAll('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase()) }
