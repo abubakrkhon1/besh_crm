@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { cache } from 'react'
 import { Profile, SalesRole, UserRole } from '@/types/database.types'
 
 export async function createClient() {
@@ -65,7 +66,7 @@ export async function requireAdmin() {
   return { error: null, user }
 }
 
-export async function getCurrentProfile(): Promise<Profile | null> {
+export const getCurrentProfile = cache(async (): Promise<Profile | null> => {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -91,7 +92,7 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   }
 
   return data as Profile
-}
+})
 
 export async function requireRoles(roles: readonly UserRole[]) {
   const profile = await getCurrentProfile()
