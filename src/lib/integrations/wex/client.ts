@@ -2,11 +2,10 @@ import 'server-only'
 
 import { ProxyAgent } from 'undici'
 import { WexError } from './errors'
+import { readWexXmlResponse } from './response'
 import { wexEnvSchema } from './schemas'
 import { assertNoSoapFault, envelope, escapeXml, parseAccountTransactionsV3, parseAllowedOrderTypes, parseCardRefreshingLimits, parseCardSummaries, parseCardV2, parseCarrierInfo, parseChildTransactionsV3, parseContracts, parseCreditLimits, parseLogin, parseMutationResponse, parseStringMutationResponse, serializeCardOrder, serializeCardV2, serializeRefreshingLimits, serializeReplacementCardOrder } from './soap'
 import type { WexCardOrder, WexCardRefreshingLimits, WexCardV2, WexReplacementCardOrder } from './types'
-
-const MAX_WEX_XML_RESPONSE_BYTES = 15 * 1024 * 1024
 
 function config() {
   const parsed = wexEnvSchema.safeParse(process.env)
@@ -24,10 +23,7 @@ async function post(body: string, options: { retry?: boolean } = {}) {
         signal: AbortSignal.timeout(15_000),
         dispatcher: new ProxyAgent(env.WEX_HTTP_PROXY),
       } as RequestInit)
-      const text = await response.text()
-      if (Buffer.byteLength(text, 'utf8') > MAX_WEX_XML_RESPONSE_BYTES) {
-        throw new WexError('WEX response exceeded the safe processing limit.', 'response_too_large')
-      }
+      const text = await readWexXmlResponse(response)
       // Axis2 commonly returns SOAP faults with HTTP 500. Parse the XML before
       // reducing the failure to an HTTP status so namespace/business faults remain actionable.
       if (text.trim().startsWith('<')) assertNoSoapFault(text)
