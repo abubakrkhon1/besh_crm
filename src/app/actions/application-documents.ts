@@ -209,29 +209,45 @@ export async function createApplicationDocumentUpload(input: unknown) {
   const { data: request } = await admin.from('application_document_requests')
     .select('id, status').eq('id', parsed.data.requestId).eq('application_id', session.application_id).maybeSingle()
   if (!request) return { error: 'Document request not found.' }
-  if (request.status === 'accepted') return { error: 'This document has already been accepted.' }
+  if (!['requested', 'rejected'].includes(request.status)) return { error: 'This document is not currently accepting uploads.' }
 
   const extension = parsed.data.mimeType === 'application/pdf' ? 'pdf' : parsed.data.mimeType === 'image/png' ? 'png' : 'jpg'
   const storagePath = `${session.application_id}/${request.id}/${randomUUID()}.${extension}`
-  const { data: intent, error: intentError } = await admin.from('application_document_upload_intents').insert({
-    portal_session_id: session.id,
-    application_id: session.application_id,
-    request_id: request.id,
-    storage_path: storagePath,
-    original_filename: parsed.data.originalFilename,
-    mime_type: parsed.data.mimeType,
-    size_bytes: parsed.data.sizeBytes,
-  }).select('id').single()
-  if (intentError || !intent) return { error: 'Unable to prepare the secure upload.' }
+  const { data: intentRows, error: intentError } = await admin.rpc('create_application_document_upload_intent', {
+    p_portal_session_id: session.id,
+    p_application_id: session.application_id,
+    p_request_id: request.id,
+    p_storage_path: storagePath,
+    p_original_filename: parsed.data.originalFilename,
+    p_mime_type: parsed.data.mimeType,
+    p_size_bytes: parsed.data.sizeBytes,
+  })
+  const intent = Array.isArray(intentRows) ? intentRows[0] : intentRows
+  if (intentError || !intent) {
+    if (intentError?.message === 'upload_already_prepared') return { error: 'An upload is already prepared for this document. Wait for it to expire before trying again.' }
+    if (intentError?.message === 'upload_quota_exceeded') return { error: 'This secure session has reached its upload limit. Request a new link from BESH support.' }
+    if (intentError?.message === 'document_request_not_uploadable') return { error: 'This document is not currently accepting uploads.' }
+    console.error('Unable to create document upload intent:', { code: intentError?.code })
+    return { error: 'Unable to prepare the secure upload.' }
+  }
+
+  const stalePaths = Array.isArray(intent.stale_storage_paths) ? intent.stale_storage_paths : []
+  if (stalePaths.length) {
+    const { error: cleanupError } = await admin.storage.from(DOCUMENT_BUCKET).remove(stalePaths)
+    if (cleanupError) console.error('Unable to remove expired document uploads:', { count: stalePaths.length, message: cleanupError.message })
+  }
 
   const { data: signedUpload, error: signedUploadError } = await admin.storage.from(DOCUMENT_BUCKET).createSignedUploadUrl(storagePath)
   if (signedUploadError || !signedUpload) {
-    await admin.from('application_document_upload_intents').delete().eq('id', intent.id)
+    await admin.from('application_document_upload_intents').update({
+      invalidated_at: new Date().toISOString(),
+      invalidation_reason: 'signed_upload_failed',
+    }).eq('id', intent.intent_id).is('completed_at', null)
     console.error('Unable to create signed document upload:', signedUploadError)
     return { error: 'Unable to prepare the private storage location.' }
   }
 
-  return { success: true, intentId: intent.id, path: signedUpload.path, token: signedUpload.token }
+  return { success: true, intentId: intent.intent_id, path: signedUpload.path, token: signedUpload.token }
 }
 
 export async function completeApplicationDocumentUpload(input: unknown) {
@@ -244,7 +260,7 @@ export async function completeApplicationDocumentUpload(input: unknown) {
   const now = new Date().toISOString()
   const { data: intent } = await admin.from('application_document_upload_intents').select('*')
     .eq('id', parsed.data.intentId).eq('portal_session_id', session.id).eq('application_id', session.application_id)
-    .gt('expires_at', now).is('completed_at', null).maybeSingle()
+    .gt('expires_at', now).is('completed_at', null).is('invalidated_at', null).maybeSingle()
   if (!intent) return { error: 'This upload has expired. Choose the file again.' }
 
   const { data: file, error: downloadError } = await admin.storage.from(DOCUMENT_BUCKET).download(intent.storage_path)
@@ -253,7 +269,10 @@ export async function completeApplicationDocumentUpload(input: unknown) {
   const valid = bytes.length === Number(intent.size_bytes) && bytes.length <= MAX_APPLICATION_DOCUMENT_BYTES && hasAllowedApplicationDocumentSignature(bytes, intent.mime_type)
   if (!valid) {
     await admin.storage.from(DOCUMENT_BUCKET).remove([intent.storage_path])
-    await admin.from('application_document_upload_intents').delete().eq('id', intent.id)
+    await admin.from('application_document_upload_intents').update({
+      invalidated_at: now,
+      invalidation_reason: 'content_validation_failed',
+    }).eq('id', intent.id)
     return { error: 'The file content does not match an allowed PDF, JPEG, or PNG file.' }
   }
 
