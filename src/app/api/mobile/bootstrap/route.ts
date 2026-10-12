@@ -32,6 +32,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: 'Driver mobile access is not active.' }, { status: 403, headers: { 'Cache-Control': 'no-store' } })
   }
 
+  const customer = Array.isArray(driver.customers) ? driver.customers[0] : driver.customers
+  if (!customer || customer.status !== 'active') {
+    return NextResponse.json({ ok: false, error: 'Customer account access is not active.' }, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+  }
+
   const [cardsResult, transactionsResult] = await Promise.all([
     admin.from('fuel_cards')
       .select('id,card_last4,status,unit_number,policy_number,daily_limit,weekly_limit,monthly_limit,gallon_limit,last_synced_at')
@@ -53,7 +58,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: 'Driver data could not be loaded.' }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
   }
 
-  const customer = Array.isArray(driver.customers) ? driver.customers[0] : driver.customers
   return NextResponse.json({
     ok: true,
     driver: {

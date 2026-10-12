@@ -61,4 +61,60 @@ describe('mobile bootstrap tenant boundary', () => {
       recentTransactions: [{ id: 'transaction-a' }],
     })
   })
+
+  it.each(['pending', 'suspended', 'closed'])('denies data access when the customer is %s', async (customerStatus) => {
+    const driverQuery = query({
+      data: {
+        id: 'driver-a', customer_id: 'customer-a', first_name: 'A', last_name: 'Driver',
+        display_name: 'A Driver', email: 'a@example.com', phone: null, license_number: null,
+        license_state: null, status: 'active', onboarding_status: 'active', provider: 'wex_efs',
+        external_driver_id: 'external-a', last_synced_at: null,
+        customers: { id: 'customer-a', company_name: 'A Co', contact_name: 'A', status: customerStatus },
+      },
+      error: null,
+    })
+    const admin = {
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: 'auth-a' } }, error: null })) },
+      from: vi.fn((table: string) => {
+        if (table === 'drivers') return driverQuery
+        throw new Error(`Inactive customer must not query ${table}`)
+      }),
+    }
+    mocks.createAdminClient.mockReturnValue(admin)
+
+    const response = await GET(new Request('https://crm.example/api/mobile/bootstrap', {
+      headers: { authorization: 'Bearer valid-token' },
+    }))
+
+    expect(response.status).toBe(403)
+    expect(admin.from).toHaveBeenCalledTimes(1)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'Customer account access is not active.' })
+  })
+
+  it('denies data access when the driver has no customer relation', async () => {
+    const driverQuery = query({
+      data: {
+        id: 'driver-a', customer_id: 'customer-a', first_name: 'A', last_name: 'Driver',
+        display_name: 'A Driver', email: 'a@example.com', phone: null, license_number: null,
+        license_state: null, status: 'active', onboarding_status: 'active', provider: 'wex_efs',
+        external_driver_id: 'external-a', last_synced_at: null, customers: null,
+      },
+      error: null,
+    })
+    const admin = {
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: 'auth-a' } }, error: null })) },
+      from: vi.fn((table: string) => {
+        if (table === 'drivers') return driverQuery
+        throw new Error(`Missing customer must not query ${table}`)
+      }),
+    }
+    mocks.createAdminClient.mockReturnValue(admin)
+
+    const response = await GET(new Request('https://crm.example/api/mobile/bootstrap', {
+      headers: { authorization: 'Bearer valid-token' },
+    }))
+
+    expect(response.status).toBe(403)
+    expect(admin.from).toHaveBeenCalledTimes(1)
+  })
 })
