@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { CreditCard, Gauge, KeyRound, LoaderCircle, RefreshCcw, Snowflake, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { changeFuelCardPin, changeFuelCardStatus, issueFuelCard, loadWexCardOrderOptions, removeFuelCard, replaceFuelCard, setFuelCardLimits } from '@/app/actions/card-management'
@@ -244,12 +244,22 @@ export function CardSecurityActions({ cardId }: { cardId: string }) {
   </>
 }
 
-export function IssueFuelCardDialog({ customers }: { customers: CustomerOption[] }) {
-  const [open, setOpen] = useState(false)
+export function IssueFuelCardDialog({ customers, defaultOpen = false }: { customers: CustomerOption[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
   const [options, setOptions] = useState<WexAllowedOrderType[] | null>(null)
   const [selectedOrderType, setSelectedOrderType] = useState('')
   const [error, setError] = useState<string>()
   const [pending, startTransition] = useTransition()
+
+  useEffect(() => {
+    if (!defaultOpen) return
+    startTransition(async () => {
+      const result = await loadWexCardOrderOptions()
+      setOptions(result.options)
+      if (!result.ok) setError(result.message)
+      if (result.options[0]) setSelectedOrderType(String(result.options[0].orderType))
+    })
+  }, [defaultOpen])
 
   function changeOpen(next: boolean) {
     setOpen(next)

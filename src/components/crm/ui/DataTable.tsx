@@ -31,6 +31,11 @@ interface DataTableProps<TData, TValue> {
   emptyTitle?: string
   emptyDescription?: string
   embedded?: boolean
+  totalRows?: number
+  page?: number
+  pageSize?: number
+  onPageChange?: (page: number) => void
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 export function DataTable<TData, TValue>({
@@ -40,9 +45,15 @@ export function DataTable<TData, TValue>({
   emptyTitle = 'No results',
   emptyDescription = 'Try adjusting your search or filters.',
   embedded = false,
+  totalRows,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
 
+  const controlled = totalRows !== undefined && page !== undefined && pageSize !== undefined && Boolean(onPageChange)
   // TanStack Table exposes mutable callbacks that React Compiler intentionally skips.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -52,8 +63,11 @@ export function DataTable<TData, TValue>({
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
+    manualPagination: controlled,
+    pageCount: controlled ? Math.max(1, Math.ceil(totalRows / pageSize)) : undefined,
     state: {
       sorting,
+      ...(controlled ? { pagination: { pageIndex: page - 1, pageSize } } : {}),
     },
   })
   const pageCount = Math.max(1, table.getPageCount())
@@ -111,24 +125,39 @@ export function DataTable<TData, TValue>({
       {embedded ? <div className="border-t">{tableContent}</div> : <Card className="overflow-hidden rounded-lg py-0">{tableContent}</Card>}
       <div className={cn('flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:justify-between', embedded ? 'px-4' : 'px-1')}>
         <div className="flex flex-wrap items-center gap-4">
-          <p className="text-sm text-muted-foreground">{data.length} result{data.length === 1 ? '' : 's'}</p>
+          <p className="text-sm text-muted-foreground">{(totalRows ?? data.length).toLocaleString()} result{(totalRows ?? data.length) === 1 ? '' : 's'}</p>
           <Field orientation="horizontal" className="w-auto">
             <FieldLabel htmlFor="data-table-page-size" className="whitespace-nowrap">Rows per page</FieldLabel>
-            <NativeSelect id="data-table-page-size" size="sm" value={table.getState().pagination.pageSize} onChange={(event) => table.setPageSize(Number(event.target.value))}>
+            <NativeSelect id="data-table-page-size" size="sm" value={table.getState().pagination.pageSize} onChange={(event) => {
+              if (controlled) onPageSizeChange?.(Number(event.target.value))
+              else table.setPageSize(Number(event.target.value))
+            }}>
               {[10, 25, 50, 100].map((size) => <NativeSelectOption key={size} value={size}>{size}</NativeSelectOption>)}
             </NativeSelect>
           </Field>
         </div>
         <Pagination className="mx-0 w-auto">
           <PaginationContent>
-            {table.getCanPreviousPage() && <PaginationItem><PaginationPrevious href="#" onClick={(event) => { event.preventDefault(); table.previousPage() }} /></PaginationItem>}
+            {table.getCanPreviousPage() && <PaginationItem><PaginationPrevious href="#" onClick={(event) => {
+              event.preventDefault()
+              if (controlled) onPageChange?.(currentPage - 1)
+              else table.previousPage()
+            }} /></PaginationItem>}
             {visiblePages.map((pageNumber, index) => <React.Fragment key={pageNumber}>
               {index > 0 && visiblePages[index - 1] < pageNumber - 1 && <PaginationItem><PaginationEllipsis /></PaginationItem>}
               <PaginationItem>
-                <PaginationLink href="#" isActive={currentPage === pageNumber} onClick={(event) => { event.preventDefault(); table.setPageIndex(pageNumber - 1) }}>{pageNumber}</PaginationLink>
+                <PaginationLink href="#" isActive={currentPage === pageNumber} onClick={(event) => {
+                  event.preventDefault()
+                  if (controlled) onPageChange?.(pageNumber)
+                  else table.setPageIndex(pageNumber - 1)
+                }}>{pageNumber}</PaginationLink>
               </PaginationItem>
             </React.Fragment>)}
-            {table.getCanNextPage() && <PaginationItem><PaginationNext href="#" onClick={(event) => { event.preventDefault(); table.nextPage() }} /></PaginationItem>}
+            {table.getCanNextPage() && <PaginationItem><PaginationNext href="#" onClick={(event) => {
+              event.preventDefault()
+              if (controlled) onPageChange?.(currentPage + 1)
+              else table.nextPage()
+            }} /></PaginationItem>}
           </PaginationContent>
         </Pagination>
       </div>

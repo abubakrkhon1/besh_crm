@@ -3,7 +3,6 @@ import 'server-only'
 import { createHmac } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { calculateAccountCreditKpis } from './account-kpis'
-import { accumulateCustomerSpend, roundCurrency, type CustomerSpendTotals } from './customer-kpis'
 import {
   getAccountTransactionsV3,
   getCardSummariesV2,
@@ -24,7 +23,6 @@ type CustomerMaps = {
   created: number
 }
 
-const KPI_PAGE_SIZE = 1_000
 const batches = <T,>(items: T[], size = 250) => Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size))
 const normalizedCardNumber = (value: string) => value.replace(/\D/g, '') || value.trim()
 
@@ -34,11 +32,22 @@ function fingerprintCard(value: string) {
   return createHmac('sha256', secret).update(normalizedCardNumber(value)).digest('hex')
 }
 
-async function ensureCustomers(db: Db, carriers: CarrierRecord[], synchronizedAt: string): Promise<CustomerMaps> {
-  const { data: currentCustomers, error } = await db
-    .from('customers')
-    .select('id,wex_carrier_id,wex_company_xref,wex_external_driver_id')
-  if (error) throw new Error('Existing customers could not be loaded for WEX matching.')
+async function loadMatchingCustomers(db: Db, carriers: CarrierRecord[], driverIds: string[] = []) {
+  const carrierIds = [...new Set(carriers.map((carrier) => carrier.carrierId).filter(Boolean))]
+  const companyXrefs = [...new Set(carriers.map((carrier) => carrier.companyXRef).filter((value): value is string => Boolean(value)))]
+  const externalDriverIds = [...new Set(driverIds.filter(Boolean))]
+  const empty = Promise.resolve({ data: [], error: null })
+  const results = await Promise.all([
+    carrierIds.length ? db.from('customers').select('id,wex_carrier_id,wex_company_xref,wex_external_driver_id').in('wex_carrier_id', carrierIds) : empty,
+    companyXrefs.length ? db.from('customers').select('id,wex_carrier_id,wex_company_xref,wex_external_driver_id').in('wex_company_xref', companyXrefs) : empty,
+    externalDriverIds.length ? db.from('customers').select('id,wex_carrier_id,wex_company_xref,wex_external_driver_id').in('wex_external_driver_id', externalDriverIds) : empty,
+  ])
+  if (results.some((result) => result.error)) throw new Error('Existing customers could not be loaded for WEX matching.')
+  return [...new Map(results.flatMap((result) => result.data ?? []).map((customer: any) => [customer.id, customer])).values()]
+}
+
+async function ensureCustomers(db: Db, carriers: CarrierRecord[], synchronizedAt: string, driverIds: string[] = []): Promise<CustomerMaps> {
+  const currentCustomers = await loadMatchingCustomers(db, carriers, driverIds)
 
   let byCarrier = new Map<string, string>((currentCustomers ?? []).filter((customer: any) => customer.wex_carrier_id).map((customer: any) => [customer.wex_carrier_id, customer.id]))
   let byXref = new Map<string, string>((currentCustomers ?? []).filter((customer: any) => customer.wex_company_xref).map((customer: any) => [customer.wex_company_xref, customer.id]))
@@ -62,10 +71,9 @@ async function ensureCustomers(db: Db, carriers: CarrierRecord[], synchronizedAt
   }
 
   if (rows.length) {
-    const { data: refreshed, error: refreshError } = await db.from('customers').select('id,wex_carrier_id,wex_company_xref')
-    if (refreshError) throw new Error('Synchronized customers could not be reloaded.')
-    byCarrier = new Map<string, string>((refreshed ?? []).filter((customer: any) => customer.wex_carrier_id).map((customer: any) => [customer.wex_carrier_id, customer.id]))
-    byXref = new Map<string, string>((refreshed ?? []).filter((customer: any) => customer.wex_company_xref).map((customer: any) => [customer.wex_company_xref, customer.id]))
+    const refreshed = await loadMatchingCustomers(db, carriers)
+    byCarrier = new Map<string, string>(refreshed.filter((customer: any) => customer.wex_carrier_id).map((customer: any) => [customer.wex_carrier_id, customer.id]))
+    byXref = new Map<string, string>(refreshed.filter((customer: any) => customer.wex_company_xref).map((customer: any) => [customer.wex_company_xref, customer.id]))
   }
 
   return { byCarrier, byXref, byDriver, created: rows.length }
@@ -73,31 +81,11 @@ async function ensureCustomers(db: Db, carriers: CarrierRecord[], synchronizedAt
 
 async function refreshCustomerSpendKpis(db: Db, customerIds: string[], synchronizedAt: string) {
   if (!customerIds.length) return
-  const monthStart = new Date(synchronizedAt)
-  monthStart.setUTCDate(1)
-  monthStart.setUTCHours(0, 0, 0, 0)
-  const totals: CustomerSpendTotals = new Map(customerIds.map((customerId) => [customerId, { monthlySpend: 0, lifetimeSpend: 0 }]))
-
-  for (let offset = 0; ; offset += KPI_PAGE_SIZE) {
-    const { data, error } = await db.from('fuel_transactions')
-      .select('id,customer_id,amount,transaction_date')
-      .in('customer_id', customerIds)
-      .eq('status', 'posted')
-      .order('id', { ascending: true })
-      .range(offset, offset + KPI_PAGE_SIZE - 1)
-    if (error) throw new Error('Customer spend transactions could not be loaded for KPI refresh.')
-    accumulateCustomerSpend(totals, data ?? [], monthStart.toISOString())
-    if (!data || data.length < KPI_PAGE_SIZE) break
-  }
-
-  for (const [customerId, spend] of totals) {
-    const { error } = await db.from('customers').update({
-      monthly_spend: roundCurrency(spend.monthlySpend),
-      lifetime_spend: roundCurrency(spend.lifetimeSpend),
-      last_synced_at: synchronizedAt,
-    }).eq('id', customerId)
-    if (error) throw new Error('Customer spend KPIs could not be updated.')
-  }
+  const { error } = await db.rpc('refresh_customer_spend_kpis', {
+    p_customer_ids: [...new Set(customerIds)],
+    p_synchronized_at: synchronizedAt,
+  })
+  if (error) throw new Error('Customer spend KPIs could not be updated.')
 }
 
 async function saveCards(db: Db, cards: WexCard[], carrier: CarrierRecord, customers: CustomerMaps, synchronizedAt: string) {
@@ -105,13 +93,15 @@ async function saveCards(db: Db, cards: WexCard[], carrier: CarrierRecord, custo
   const existingQuery = fingerprints.length
     ? db.from('fuel_cards').select('id,card_fingerprint').eq('provider', 'wex_efs').in('card_fingerprint', fingerprints)
     : Promise.resolve({ data: [], error: null })
-  const [{ data: existing, error: existingError }, { data: mappings, error: mappingsError }] = await Promise.all([
-    existingQuery,
-    db.from('fuel_card_customer_mappings').select('fuel_card_id,customer_id,is_confirmed'),
-  ])
-  if (existingError || mappingsError) throw new Error('Existing card assignments could not be loaded.')
+  const { data: existing, error: existingError } = await existingQuery
+  if (existingError) throw new Error('Existing card assignments could not be loaded.')
   const existingMap = new Map<string, string>((existing ?? []).map((item: any) => [item.card_fingerprint, item.id]))
-  const confirmedMap = new Map<string, string>((mappings ?? []).filter((item: any) => item.is_confirmed).map((item: any) => [item.fuel_card_id, item.customer_id]))
+  const existingIds = [...existingMap.values()]
+  const mappingResult = existingIds.length
+    ? await db.from('fuel_card_customer_mappings').select('fuel_card_id,customer_id').eq('is_confirmed', true).in('fuel_card_id', existingIds)
+    : { data: [], error: null }
+  if (mappingResult.error) throw new Error('Existing card assignments could not be loaded.')
+  const confirmedMap = new Map<string, string>((mappingResult.data ?? []).map((item: any) => [item.fuel_card_id, item.customer_id]))
   const soleCustomerId = customers.byCarrier.get(carrier.carrierId) ?? null
   const rows = cards.map((card, index) => {
     const fingerprint = fingerprints[index]
@@ -206,7 +196,12 @@ export async function syncWexAccountSnapshot() {
     getContracts(clientId),
   ])
   const creditLimits = await Promise.all(contracts.map((contract) => getCreditLimits(clientId, contract.contractId)))
-  const customers = await ensureCustomers(db, [{ carrierId: carrier.carrierId, companyXRef: carrier.name }], synchronizedAt)
+  const customers = await ensureCustomers(
+    db,
+    [{ carrierId: carrier.carrierId, companyXRef: carrier.name }],
+    synchronizedAt,
+    cards.map((card) => card.driverId).filter((value): value is string => Boolean(value)),
+  )
   const cardResult = await saveCards(db, cards, { carrierId: carrier.carrierId, companyXRef: carrier.name }, customers, synchronizedAt)
   const { error: driverReconcileError } = await db.rpc('reconcile_wex_driver_profiles', { p_synchronized_at: synchronizedAt })
   if (driverReconcileError) throw new Error('WEX driver profiles could not be reconciled.')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applicationSubmissionSchema } from './applications'
+import { applicationReviewSchema, applicationSubmissionSchema } from './applications'
 
 const validApplication = {
   company_legal_name: 'Acme Logistics LLC', doing_business_as: null, business_phone: '555-555-5555',
@@ -27,6 +27,20 @@ describe('applicationSubmissionSchema', () => {
   it('rejects malformed financial and identity fields', () => {
     const result = applicationSubmissionSchema.safeParse({ ...validApplication, aba_routing_number: '12', social_security_number: '1234' })
     expect(result.success).toBe(false)
+  })
+})
+
+describe('applicationReviewSchema', () => {
+  const id = 'a27c4036-8de5-44a3-b0cd-5cd6ca3d63db'
+
+  it('accepts final review decisions', () => {
+    expect(applicationReviewSchema.safeParse({ id, status: 'approved' }).success).toBe(true)
+    expect(applicationReviewSchema.safeParse({ id, status: 'denied', denialReason: 'Incomplete credit history.' }).success).toBe(true)
+  })
+
+  it('rejects malformed identifiers and non-final statuses', () => {
+    expect(applicationReviewSchema.safeParse({ id: 'not-an-id', status: 'approved' }).success).toBe(false)
+    expect(applicationReviewSchema.safeParse({ id, status: 'under_review' }).success).toBe(false)
   })
 })
 

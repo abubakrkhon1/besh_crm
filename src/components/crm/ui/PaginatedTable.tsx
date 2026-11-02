@@ -27,6 +27,10 @@ type PaginatedTableProps = {
   pageSizes?: readonly number[]
   cardClassName?: string
   embedded?: boolean
+  totalItems?: number
+  currentPage?: number
+  onPageChange?: (page: number) => void
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 export function PaginatedTable({
@@ -39,15 +43,23 @@ export function PaginatedTable({
   pageSizes = TABLE_PAGE_SIZES,
   cardClassName = 'overflow-hidden py-0',
   embedded = false,
+  totalItems,
+  currentPage: controlledPage,
+  onPageChange,
+  onPageSizeChange,
 }: PaginatedTableProps) {
   const rowItems = Children.toArray(rows)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(initialPageSize)
-  const pageCount = Math.max(1, Math.ceil(rowItems.length / pageSize))
-  const currentPage = Math.min(page, pageCount)
-  const firstVisibleRow = rowItems.length ? (currentPage - 1) * pageSize + 1 : 0
-  const lastVisibleRow = Math.min(currentPage * pageSize, rowItems.length)
-  const visibleRows = rowItems.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const controlled = totalItems !== undefined && controlledPage !== undefined && Boolean(onPageChange)
+  const itemCount = controlled ? totalItems : rowItems.length
+  const effectivePageSize = controlled ? initialPageSize : pageSize
+  const pageCount = Math.max(1, Math.ceil(itemCount / effectivePageSize))
+  const currentPage = Math.min(controlled ? controlledPage : page, pageCount)
+  const firstVisibleRow = itemCount ? (currentPage - 1) * effectivePageSize + 1 : 0
+  const lastVisibleRow = Math.min(currentPage * effectivePageSize, itemCount)
+  const visibleRows = controlled ? rowItems : rowItems.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const changePage = (value: number) => controlled ? onPageChange?.(value) : setPage(value)
   const visiblePages = useMemo(
     () => [...new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount])].filter((value) => value >= 1 && value <= pageCount),
     [currentPage, pageCount],
@@ -75,17 +87,21 @@ export function PaginatedTable({
       <div className={cn('flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:justify-between', embedded ? 'px-4' : 'px-1')}>
         <div className="flex flex-wrap items-center gap-4">
           <p className="text-sm text-muted-foreground">
-            Showing {firstVisibleRow === lastVisibleRow ? firstVisibleRow.toLocaleString() : `${firstVisibleRow.toLocaleString()}–${lastVisibleRow.toLocaleString()}`} of {rowItems.length.toLocaleString()} {itemLabel}
+            Showing {firstVisibleRow === lastVisibleRow ? firstVisibleRow.toLocaleString() : `${firstVisibleRow.toLocaleString()}–${lastVisibleRow.toLocaleString()}`} of {itemCount.toLocaleString()} {itemLabel}
           </p>
           <Field orientation="horizontal" className="w-auto">
             <FieldLabel htmlFor={`${itemLabel.replaceAll(' ', '-')}-page-size`} className="whitespace-nowrap">Rows per page</FieldLabel>
             <NativeSelect
               id={`${itemLabel.replaceAll(' ', '-')}-page-size`}
               size="sm"
-              value={pageSize}
+              value={effectivePageSize}
               onChange={(event) => {
-                setPageSize(Number(event.target.value))
-                setPage(1)
+                const value = Number(event.target.value)
+                if (controlled) onPageSizeChange?.(value)
+                else {
+                  setPageSize(value)
+                  setPage(1)
+                }
               }}
             >
               {pageSizes.map((size) => <NativeSelectOption key={size} value={size}>{size}</NativeSelectOption>)}
@@ -95,16 +111,16 @@ export function PaginatedTable({
 
         <Pagination className="mx-0 w-auto">
           <PaginationContent>
-            {currentPage > 1 && <PaginationItem><PaginationPrevious href="#" onClick={(event) => { event.preventDefault(); setPage(currentPage - 1) }} /></PaginationItem>}
+            {currentPage > 1 && <PaginationItem><PaginationPrevious href="#" onClick={(event) => { event.preventDefault(); changePage(currentPage - 1) }} /></PaginationItem>}
             {visiblePages.map((value, index) => (
               <Fragment key={value}>
                 {index > 0 && visiblePages[index - 1] < value - 1 && <PaginationItem><PaginationEllipsis /></PaginationItem>}
                 <PaginationItem>
-                  <PaginationLink href="#" isActive={value === currentPage} onClick={(event) => { event.preventDefault(); setPage(value) }}>{value}</PaginationLink>
+                  <PaginationLink href="#" isActive={value === currentPage} onClick={(event) => { event.preventDefault(); changePage(value) }}>{value}</PaginationLink>
                 </PaginationItem>
               </Fragment>
             ))}
-            {currentPage < pageCount && <PaginationItem><PaginationNext href="#" onClick={(event) => { event.preventDefault(); setPage(currentPage + 1) }} /></PaginationItem>}
+            {currentPage < pageCount && <PaginationItem><PaginationNext href="#" onClick={(event) => { event.preventDefault(); changePage(currentPage + 1) }} /></PaginationItem>}
           </PaginationContent>
         </Pagination>
       </div>

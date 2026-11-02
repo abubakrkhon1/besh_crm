@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { Building2, CalendarClock, CircleDollarSign, Clock3, Pencil, Tags } from 'lucide-react'
 import { toast } from 'sonner'
 import { setStationSavingsPrice, type StationSavingsPriceWithEditor } from '@/app/actions/savings-pricing'
+import { TablePagination } from '@/components/crm/ui/TablePagination'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -54,9 +56,18 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`))
 }
 
-export function SavingsPricingWorkspace({ initialPrices, loadError }: { initialPrices: StationSavingsPriceWithEditor[]; loadError: string | null }) {
-  const [prices, setPrices] = useState(initialPrices)
-  const [dataError, setDataError] = useState(loadError)
+type SavingsPricingWorkspaceProps = {
+  currentPrices: StationSavingsPriceWithEditor[]
+  historyPrices: StationSavingsPriceWithEditor[]
+  total: number
+  page: number
+  pageSize: number
+  referenceDate: string
+  error: string | null
+}
+
+export function SavingsPricingWorkspace({ currentPrices, historyPrices, total, page, pageSize, referenceDate, error: loadError }: SavingsPricingWorkspaceProps) {
+  const router = useRouter()
   const [selectedId, setSelectedId] = useState<StationBrand | null>(null)
   const [pumpPriceInput, setPumpPriceInput] = useState('')
   const [wexPriceInput, setWexPriceInput] = useState('')
@@ -66,9 +77,9 @@ export function SavingsPricingWorkspace({ initialPrices, loadError }: { initialP
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
-  const today = localDateInputValue()
+  const today = referenceDate
   const stations = STATIONS.map((station): StationPrice => {
-    const current = prices.find((price) => price.station_brand === station.id
+    const current = currentPrices.find((price) => price.station_brand === station.id
       && price.effective_from <= today
       && (!price.effective_until || price.effective_until >= today))
     return {
@@ -142,10 +153,9 @@ export function SavingsPricingWorkspace({ initialPrices, loadError }: { initialP
         setError(result.message)
         return
       }
-      if (result.prices) setPrices(result.prices)
-      setDataError(null)
       toast.success(`${selectedStation.name} price saved.`)
       closeEditor()
+      router.refresh()
     })
   }
 
@@ -164,11 +174,11 @@ export function SavingsPricingWorkspace({ initialPrices, loadError }: { initialP
         </div>
       </header>
 
-      <Alert variant={dataError ? 'destructive' : 'default'}>
+      <Alert variant={loadError ? 'destructive' : 'default'}>
         <CalendarClock aria-hidden="true" />
-        <AlertTitle>{dataError ? 'Pricing data unavailable' : 'Daily pricing workflow'}</AlertTitle>
+        <AlertTitle>{loadError ? 'Pricing data unavailable' : 'Daily pricing workflow'}</AlertTitle>
         <AlertDescription>
-          {dataError ?? 'Set or confirm each station price for today. Saving the same station and effective date updates that daily record; prior dates remain in history.'}
+          {loadError ?? 'Set or confirm each station price for today. Saving the same station and effective date updates that daily record; prior dates remain in history.'}
         </AlertDescription>
       </Alert>
 
@@ -247,7 +257,7 @@ export function SavingsPricingWorkspace({ initialPrices, loadError }: { initialP
               </TableRow>
             </TableHeader>
             <TableBody>
-              {prices.length ? prices.map((item) => (
+              {historyPrices.length ? historyPrices.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="pl-5 font-medium">{STATION_NAMES[item.station_brand]}</TableCell>
                   <TableCell className="tabular-nums">{formatPrice(item.pump_price_per_gallon)}</TableCell>
@@ -268,6 +278,9 @@ export function SavingsPricingWorkspace({ initialPrices, loadError }: { initialP
             </TableBody>
           </Table>
         </CardContent>
+        <CardFooter className="px-5 py-0">
+          <TablePagination page={page} pageSize={pageSize} total={total} itemLabel="price records" />
+        </CardFooter>
       </Card>
 
       <Dialog open={selectedId != null} onOpenChange={(open) => { if (!open) closeEditor() }}>

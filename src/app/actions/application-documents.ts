@@ -286,19 +286,28 @@ export async function completeApplicationDocumentUpload(input: unknown) {
     submitted_by: 'applicant',
   })
   if (documentError) {
+    if (documentError.code === '23514') {
+      return { error: 'This application has already received a final decision.' }
+    }
     console.error('Unable to record uploaded application document:', documentError)
     return { error: 'The file uploaded, but could not be attached to the application.' }
   }
 
-  await Promise.all([
+  const [intentUpdate, requestUpdate, activityInsert] = await Promise.all([
     admin.from('application_document_upload_intents').update({ completed_at: now }).eq('id', intent.id),
     admin.from('application_document_requests').update({ status: 'uploaded', completed_at: now }).eq('id', intent.request_id),
     admin.from('activity_logs').insert({ entity_type: 'application', entity_id: session.application_id, action: 'document_uploaded', description: intent.original_filename, metadata: { request_id: intent.request_id } }),
   ])
+  if (intentUpdate.error || requestUpdate.error || activityInsert.error) {
+    return { error: 'The document was uploaded, but its workflow could not be completed. Contact BESH support.' }
+  }
 
   const { data: requiredRequests } = await admin.from('application_document_requests').select('status').eq('application_id', session.application_id).eq('is_required', true)
   const allRequiredUploaded = Boolean(requiredRequests?.length) && requiredRequests!.every((request) => request.status === 'uploaded' || request.status === 'accepted')
-  if (allRequiredUploaded) await admin.from('applications').update({ status: 'under_review' }).eq('id', session.application_id)
+  if (allRequiredUploaded) {
+    const { error: statusError } = await admin.from('applications').update({ status: 'under_review' }).eq('id', session.application_id)
+    if (statusError) return { error: 'The application changed while the upload was completing. Refresh and try again.' }
+  }
 
   revalidatePath('/application-portal')
   revalidatePath('/crm/applications')
@@ -400,11 +409,16 @@ export async function rejectApplicationDocument(input: unknown) {
   }
 
   const now = new Date().toISOString()
-  await Promise.all([
+  const { error: statusError } = await admin.from('applications').update({ status: 'needs_documents' }).eq('id', document.application_id)
+  if (statusError) return { error: 'The application changed while this document was being reviewed. Refresh and try again.' }
+
+  const [documentUpdate, requestUpdate] = await Promise.all([
     admin.from('application_documents').update({ review_status: 'rejected', rejection_reason: parsed.data.reason, reviewed_by_profile_id: profile.id, reviewed_at: now }).eq('id', document.id),
     admin.from('application_document_requests').update({ status: 'rejected', completed_at: null }).eq('id', document.request_id),
-    admin.from('applications').update({ status: 'needs_documents' }).eq('id', document.application_id),
   ])
+  if (documentUpdate.error || requestUpdate.error) {
+    return { error: 'The application changed while this document was being reviewed. Refresh and try again.' }
+  }
 
   await admin.from('application_access_links').update({ revoked_at: now }).eq('application_id', document.application_id).is('consumed_at', null).is('revoked_at', null)
   const { data: link, error: linkError } = await admin.from('application_access_links').insert({

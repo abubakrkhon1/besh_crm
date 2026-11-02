@@ -2,11 +2,13 @@
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Search, X } from 'lucide-react'
+import { Check, ChevronsUpDown, Loader2, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { cn } from '@/lib/utils'
 
 type FilterOption = { value: string; label: string }
 
@@ -61,11 +63,82 @@ export function TransactionFilters({ statuses, customers, cards, fuelTypes }: Tr
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <FilterSelect label="Status" value={params.get('status') ?? ''} onChange={(value) => update('status', value)} options={statuses.map((status) => ({ value: status, label: formatLabel(status) }))} allLabel="All statuses" />
-        <FilterSelect label="Customer" value={params.get('customer') ?? ''} onChange={(value) => update('customer', value)} options={customers} allLabel="All customers" />
-        <FilterSelect label="Card" value={params.get('card') ?? ''} onChange={(value) => update('card', value)} options={cards} allLabel="All cards" />
+        <LookupFilter label="Customer" type="customer" value={params.get('customer') ?? ''} selectedOptions={customers} onChange={(value) => update('customer', value)} allLabel="All customers" />
+        <LookupFilter label="Card" type="card" value={params.get('card') ?? ''} selectedOptions={cards} onChange={(value) => update('card', value)} allLabel="All cards" />
         <FilterSelect label="Fuel type" value={params.get('fuelType') ?? ''} onChange={(value) => update('fuelType', value)} options={fuelTypes.map((type) => ({ value: type, label: formatLabel(type) }))} allLabel="All fuel types" />
       </div>
     </div>
+  )
+}
+
+function LookupFilter({ label, type, value, selectedOptions, onChange, allLabel }: {
+  label: string
+  type: 'customer' | 'card'
+  value: string
+  selectedOptions: FilterOption[]
+  onChange: (value: string) => void
+  allLabel: string
+}) {
+  const [search, setSearch] = useState('')
+  const [options, setOptions] = useState<FilterOption[]>(selectedOptions)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+  const selected = [...selectedOptions, ...options].find((option) => option.value === value)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      setLoading(true)
+      try {
+        const response = await fetch(`/api/transactions/filter-options?type=${type}&q=${encodeURIComponent(search.trim())}`, {
+          signal: controller.signal,
+          cache: 'no-store',
+        })
+        if (!response.ok) return
+        const payload = await response.json() as { options?: FilterOption[] }
+        setOptions(payload.options ?? [])
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) console.error(`Could not load ${type} options:`, error)
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }, 250)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [search, type])
+
+  return (
+    <Field className="min-w-0 gap-1">
+      <FieldLabel className="text-xs">{label}</FieldLabel>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger render={<Button type="button" variant="outline" className="w-full justify-between font-normal" />}>
+          <span className="truncate">{selected?.label ?? allLabel}</span>
+          <ChevronsUpDown className="size-4 text-muted-foreground" />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-2">
+          <div className="relative mb-2">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" placeholder={`Search ${label.toLowerCase()}…`} autoFocus />
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false) }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
+              <Check className={cn('size-4', value ? 'opacity-0' : 'opacity-100')} />
+              {allLabel}
+            </button>
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading…</div>
+            ) : options.length ? options.map((option) => (
+              <button key={option.value} type="button" onClick={() => { onChange(option.value); setOpen(false) }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
+                <Check className={cn('size-4 shrink-0', value === option.value ? 'opacity-100' : 'opacity-0')} />
+                <span className="truncate">{option.label}</span>
+              </button>
+            )) : <p className="py-6 text-center text-sm text-muted-foreground">No matches.</p>}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </Field>
   )
 }
 

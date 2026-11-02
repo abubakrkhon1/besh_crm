@@ -4,11 +4,11 @@ import {
   ArrowDown, ArrowUp, BadgeCheck, Bolt, CalendarDays, ChartNoAxesColumnIncreasing,
   CircleAlert, ContactRound, Download, FileText, ListChecks, Target, TrendingUp, Trophy, UserPlus, Users,
 } from 'lucide-react'
-import { getLeads, getSalesAgents } from '@/app/actions/leads'
+import { getSalesAgents, getSalesManagerAgentPerformance, type SalesManagerAgentPerformance } from '@/app/actions/leads'
 import { getAvailableSalesAgents } from '@/app/actions/sales-agents'
 import { SalesAgentTeamAssignment } from '@/components/crm/SalesAgentTeamAssignment'
 import { SalesRepOwnershipChart, type OwnershipDatum } from '@/components/crm/SalesRepOwnershipChart'
-import { buildRepresentativePerformance, initials, SalesRepresentativesTable, type RepresentativePerformance } from '@/components/crm/SalesRepresentativesTable'
+import { initials, SalesRepresentativesTable, type RepresentativePerformance } from '@/components/crm/SalesRepresentativesTable'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,20 +23,20 @@ export default async function SalesAgentsPage({ searchParams }: { searchParams: 
 
   const params = await searchParams
   const period = resolvePeriod(params)
-  const [representatives, availableAgents, leads, previousLeads] = await Promise.all([
+  const [representatives, availableAgents, currentAggregates, previousAggregates] = await Promise.all([
     getSalesAgents(),
     getAvailableSalesAgents(),
-    getLeads(undefined, period.start.toISOString(), period.end.toISOString()),
-    getLeads(undefined, period.previousStart.toISOString(), period.start.toISOString()),
+    getSalesManagerAgentPerformance(period.start.toISOString(), period.end.toISOString()),
+    getSalesManagerAgentPerformance(period.previousStart.toISOString(), period.start.toISOString()),
   ])
-  const performance = buildRepresentativePerformance(representatives, leads)
-  const previousPerformance = buildRepresentativePerformance(representatives, previousLeads)
-  const accepted = leads.filter((lead) => !['new', 'deal_lost'].includes(lead.status)).length
-  const inserted = leads.filter((lead) => lead.status === 'successful').length
-  const previousAccepted = previousLeads.filter((lead) => !['new', 'deal_lost'].includes(lead.status)).length
-  const previousInserted = previousLeads.filter((lead) => lead.status === 'successful').length
-  const conversion = leads.length ? inserted / leads.length * 100 : 0
-  const previousConversion = previousLeads.length ? previousInserted / previousLeads.length * 100 : 0
+  const currentRows = currentAggregates ?? []
+  const previousRows = previousAggregates ?? []
+  const performance = buildAggregatePerformance(representatives, currentRows)
+  const previousPerformance = buildAggregatePerformance(representatives, previousRows)
+  const totals = sumPerformance(currentRows)
+  const previousTotals = sumPerformance(previousRows)
+  const conversion = totals.total ? totals.successful / totals.total * 100 : 0
+  const previousConversion = previousTotals.total ? previousTotals.successful / previousTotals.total * 100 : 0
   const ownership = performance.filter((row) => row.total > 0).slice(0, 6).map((row, index): OwnershipDatum => ({
     id: row.representative.id,
     name: row.representative.full_name ?? row.representative.email ?? 'Unnamed sales agent',
@@ -68,9 +68,9 @@ export default async function SalesAgentsPage({ searchParams }: { searchParams: 
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <SalesMetricCard title="Active Sales Agents" value={representatives.length} previous={representatives.length} icon={Users} tone="blue" />
-        <SalesMetricCard title="Total Leads" value={leads.length} previous={previousLeads.length} icon={ContactRound} tone="blue" />
-        <SalesMetricCard title="Inserted to CRM" value={inserted} previous={previousInserted} icon={ListChecks} tone="purple" />
-        <SalesMetricCard title="Accepted Leads" value={accepted} previous={previousAccepted} icon={BadgeCheck} tone="green" />
+        <SalesMetricCard title="Total Leads" value={totals.total} previous={previousTotals.total} icon={ContactRound} tone="blue" />
+        <SalesMetricCard title="Inserted to CRM" value={totals.successful} previous={previousTotals.successful} icon={ListChecks} tone="purple" />
+        <SalesMetricCard title="Accepted Leads" value={totals.accepted} previous={previousTotals.accepted} icon={BadgeCheck} tone="green" />
         <SalesMetricCard title="Team Conversion Rate" value={`${conversion.toFixed(1)}%`} numericValue={conversion} previous={previousConversion} icon={Target} tone="orange" percentagePoint />
       </section>
 
@@ -153,6 +153,35 @@ function resolvePeriod(params: PageParams) {
   const start = new Date(`${from}T00:00:00.000Z`); const end = new Date(`${to}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1)
   const duration = end.getTime() - start.getTime(); const previousStart = new Date(start.getTime() - duration)
   return { from, to, start, end, previousStart }
+}
+
+function buildAggregatePerformance(
+  representatives: Awaited<ReturnType<typeof getSalesAgents>>,
+  aggregates: SalesManagerAgentPerformance[],
+): RepresentativePerformance[] {
+  const byProfileId = new Map(aggregates.filter((row) => row.profile_id).map((row) => [row.profile_id, row]))
+  return representatives.map((representative) => {
+    const aggregate = byProfileId.get(representative.id)
+    const total = Number(aggregate?.total_leads ?? 0)
+    const successful = Number(aggregate?.successful_leads ?? 0)
+    return {
+      representative,
+      total,
+      accepted: Number(aggregate?.accepted_leads ?? 0),
+      successful,
+      conversionRate: total ? Math.round(successful / total * 1000) / 10 : 0,
+      estimatedGallons: Number(aggregate?.estimated_monthly_gallons ?? 0),
+      lastActivity: aggregate?.last_activity ?? null,
+    }
+  }).sort((a, b) => b.successful - a.successful || b.total - a.total)
+}
+
+function sumPerformance(rows: SalesManagerAgentPerformance[]) {
+  return rows.reduce((totals, row) => ({
+    total: totals.total + Number(row.total_leads),
+    accepted: totals.accepted + Number(row.accepted_leads),
+    successful: totals.successful + Number(row.successful_leads),
+  }), { total: 0, accepted: 0, successful: 0 })
 }
 
 function findMostImproved(current: RepresentativePerformance[], previous: RepresentativePerformance[]) { return [...current].sort((a, b) => trendFor(b, previous) - trendFor(a, previous))[0] }

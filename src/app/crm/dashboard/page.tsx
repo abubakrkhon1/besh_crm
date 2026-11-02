@@ -1,7 +1,16 @@
 import Link from 'next/link'
 import { ArrowRight, ChartNoAxesCombined, CircleGauge, Contact, CreditCard, DollarSign, Droplets, FileText, ListFilter, Plus, Receipt, UserCheck, Users } from 'lucide-react'
-import { getGeneralManagerDashboard, getLeads, getSalesAgents, type LeadWithRepresentative } from '@/app/actions/leads'
-import { LeadsTable } from '@/components/crm/LeadsTable'
+import {
+  getGeneralManagerDashboard,
+  getLeads,
+  getSalesAgentDashboard,
+  getSalesAgents,
+  getSalesManagerAgentPerformance,
+  getSalesManagerDashboard,
+  type LeadWithRepresentative,
+  type SalesManagerAgentPerformance,
+} from '@/app/actions/leads'
+import { LeadsTable } from '@/components/crm/LeadsTableShell'
 import { NewLeadDialog } from '@/components/crm/NewLeadDialog'
 import { DashboardDateFilter } from '@/components/crm/DashboardDateFilter'
 import { SalesOverviewChart, SpendByStateChart } from '@/components/crm/OwnerDashboardCharts'
@@ -40,7 +49,7 @@ async function GeneralManagerDashboard({
   const range = getDashboardDateRange(searchParams)
   const [stats, leads] = await Promise.all([
     getGeneralManagerDashboard(range.rangeStart, range.rangeEnd),
-    getLeads(),
+    getLeads(undefined, undefined, undefined, 25),
   ])
 
   return (
@@ -315,25 +324,29 @@ async function SalesManagerDashboard({
   searchParams: Awaited<DashboardSearchParams>
 }) {
   const range = getDashboardDateRange(searchParams)
-  const [leads, representatives] = await Promise.all([
-    getLeads(),
+  const [periodLeads, openLeadCandidates, representatives, dashboardStats, aggregatePerformance] = await Promise.all([
+    getLeads(undefined, range.rangeStart, range.rangeEnd, 500),
+    getLeads(undefined, undefined, undefined, 500),
     getSalesAgents(),
+    getSalesManagerDashboard(range.rangeStart, range.rangeEnd),
+    getSalesManagerAgentPerformance(range.rangeStart, range.rangeEnd),
   ])
-  const periodLeads = leads.filter((lead) => isInPeriod(lead.created_at, range.rangeStart, range.rangeEnd))
-  const performance = buildSalesPeriodPerformance(representatives, leads, range.rangeStart, range.rangeEnd)
+  const performance = aggregatePerformance
+    ? buildAggregatedSalesPeriodPerformance(representatives, aggregatePerformance)
+    : buildSalesPeriodPerformance(representatives, periodLeads, range.rangeStart, range.rangeEnd)
   const counts: SalesManagerLeadCounts = {
-    new: periodLeads.filter((lead) => lead.status === 'new').length,
-    on_the_process: periodLeads.filter((lead) => lead.status === 'on_the_process').length,
-    follow_up: periodLeads.filter((lead) => lead.status === 'follow_up').length,
-    successful: periodLeads.filter((lead) => lead.status === 'successful').length,
-    deal_lost: periodLeads.filter((lead) => lead.status === 'deal_lost').length,
+    new: Number(dashboardStats?.new_leads ?? periodLeads.filter((lead) => lead.status === 'new').length),
+    on_the_process: Number(dashboardStats?.in_process_leads ?? periodLeads.filter((lead) => lead.status === 'on_the_process').length),
+    follow_up: Number(dashboardStats?.follow_up_leads ?? periodLeads.filter((lead) => lead.status === 'follow_up').length),
+    successful: Number(dashboardStats?.successful_leads ?? periodLeads.filter((lead) => lead.status === 'successful').length),
+    deal_lost: Number(dashboardStats?.deal_lost_leads ?? periodLeads.filter((lead) => lead.status === 'deal_lost').length),
   }
-  const acceptedLeads = periodLeads.filter((lead) => ['on_the_process', 'follow_up', 'successful'].includes(lead.status)).length
+  const acceptedLeads = Number(dashboardStats?.accepted_leads ?? periodLeads.filter((lead) => ['on_the_process', 'follow_up', 'successful'].includes(lead.status)).length)
   const inProgressLeads = counts.on_the_process + counts.follow_up
-  const insertedLeads = counts.successful
+  const insertedLeads = Number(dashboardStats?.successful_leads ?? counts.successful)
   const conversionRate = periodLeads.length ? Math.round((insertedLeads / periodLeads.length) * 1000) / 10 : 0
-  const estimatedGallons = periodLeads.reduce((total, lead) => total + Number(lead.estimated_monthly_gallons ?? 0), 0)
-  const openLeads = leads.filter(isOpenLead)
+  const estimatedGallons = Number(dashboardStats?.estimated_monthly_gallons ?? periodLeads.reduce((total, lead) => total + Number(lead.estimated_monthly_gallons ?? 0), 0))
+  const openLeads = openLeadCandidates.filter(isOpenLead)
   const dashboardNow = new Date()
   const attentionQueue = buildLeadAttentionQueue(openLeads, dashboardNow)
 
@@ -352,11 +365,11 @@ async function SalesManagerDashboard({
 
       <div className="grid gap-4 xl:grid-cols-12">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:col-span-7">
-          <OwnerMetricCard title="Total leads" value={periodLeads.length} detail="Received in selected period" icon={<Contact />} tone="blue" />
-          <OwnerMetricCard title="In progress" value={inProgressLeads} detail="In process or follow-up" icon={<ListFilter />} tone="violet" />
+          <OwnerMetricCard title="Total leads" value={Number(dashboardStats?.total_leads ?? periodLeads.length)} detail="Received in selected period" icon={<Contact />} tone="blue" />
+          <OwnerMetricCard title="In progress" value={Number(dashboardStats?.in_process_leads ?? inProgressLeads)} detail="In process or follow-up" icon={<ListFilter />} tone="violet" />
           <OwnerMetricCard title="Accepted leads" value={acceptedLeads} detail="Accepted or further progressed" icon={<UserCheck />} tone="green" />
-          <OwnerMetricCard title="Conversion rate" value={`${conversionRate}%`} detail="Inserted ÷ total leads" icon={<CircleGauge />} tone="orange" />
-          <OwnerMetricCard title="Active sales agents" value={representatives.length} detail="Currently active" icon={<Users />} tone="teal" />
+          <OwnerMetricCard title="Conversion rate" value={`${Number(dashboardStats?.conversion_rate ?? conversionRate)}%`} detail="Inserted ÷ total leads" icon={<CircleGauge />} tone="orange" />
+          <OwnerMetricCard title="Active sales agents" value={Number(dashboardStats?.total_agents ?? representatives.length)} detail="Currently active" icon={<Users />} tone="teal" />
           <OwnerMetricCard title="Est. gallons / fleet" value={formatCompactNumber(estimatedGallons)} detail="Selected-period potential" icon={<Droplets />} tone="green" />
         </div>
         <div className="xl:col-span-5">
@@ -406,6 +419,28 @@ function buildSalesPeriodPerformance(
       inserted,
       conversionRate: representativeLeads.length ? Math.round((inserted / representativeLeads.length) * 1000) / 10 : 0,
       lastActivity,
+    }
+  }).sort((a, b) => b.inserted - a.inserted || b.total - a.total)
+}
+
+function buildAggregatedSalesPeriodPerformance(
+  representatives: Profile[],
+  aggregates: SalesManagerAgentPerformance[],
+): SalesPeriodPerformance[] {
+  const byProfileId = new Map(aggregates.map((aggregate) => [aggregate.profile_id, aggregate]))
+
+  return representatives.map((representative) => {
+    const aggregate = byProfileId.get(representative.id)
+    const total = Number(aggregate?.total_leads ?? 0)
+    const inserted = Number(aggregate?.successful_leads ?? 0)
+
+    return {
+      representative,
+      total,
+      accepted: Number(aggregate?.accepted_leads ?? 0),
+      inserted,
+      conversionRate: total ? Math.round((inserted / total) * 1000) / 10 : 0,
+      lastActivity: aggregate?.last_activity ?? null,
     }
   }).sort((a, b) => b.inserted - a.inserted || b.total - a.total)
 }
@@ -604,27 +639,30 @@ function SalesManagerQuickActions() {
 }
 
 async function SalesAgentDashboard({ name }: { name?: string | null }) {
-  const leads = await getLeads()
-  const inProcess = leads.filter((lead) => lead.status === 'on_the_process').length
-  const successful = leads.filter((lead) => lead.status === 'successful').length
+  const [leads, dashboardStats] = await Promise.all([
+    getLeads(undefined, undefined, undefined, 500),
+    getSalesAgentDashboard(),
+  ])
+  const inProcess = Number(dashboardStats?.in_process_leads ?? leads.filter((lead) => lead.status === 'on_the_process').length)
+  const successful = Number(dashboardStats?.successful_leads ?? leads.filter((lead) => lead.status === 'successful').length)
   const statusCounts = {
-    new: leads.filter((lead) => lead.status === 'new').length,
+    new: Number(dashboardStats?.new_leads ?? leads.filter((lead) => lead.status === 'new').length),
     successful,
-    deal_lost: leads.filter((lead) => lead.status === 'deal_lost').length,
+    deal_lost: Number(dashboardStats?.deal_lost_leads ?? leads.filter((lead) => lead.status === 'deal_lost').length),
     on_the_process: inProcess,
-    follow_up: leads.filter((lead) => lead.status === 'follow_up').length,
+    follow_up: Number(dashboardStats?.follow_up_leads ?? leads.filter((lead) => lead.status === 'follow_up').length),
   }
-  const potentialGallons = leads.reduce(
+  const potentialGallons = Number(dashboardStats?.estimated_monthly_gallons ?? leads.reduce(
     (total, lead) => total + (lead.estimated_monthly_gallons ?? 0),
     0,
-  )
+  ))
 
   return (
     <DashboardShell title={`My sales workspace${name ? ` · ${name}` : ''}`} description="Add prospects and track their progress into Fuel CRM.">
       <div className="grid items-stretch gap-4 md:grid-cols-2">
         <LeadStatusChart counts={statusCounts} />
         <div className="grid h-[300px] grid-cols-2 gap-4">
-          <MetricCard className="min-w-0" title="My leads" value={leads.length} icon={<Contact />} />
+          <MetricCard className="min-w-0" title="My leads" value={Number(dashboardStats?.total_leads ?? leads.length)} icon={<Contact />} />
           <MetricCard className="min-w-0" title="On the Process" value={inProcess} icon={<Contact />} />
           <MetricCard className="min-w-0" title="Successful" value={successful} icon={<Contact />} />
           <MetricCard

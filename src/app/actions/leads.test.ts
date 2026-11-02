@@ -14,7 +14,17 @@ vi.mock('@/lib/supabase/server', () => ({
   CRM_ROLES: ['owner', 'admin', 'general_manager', 'sales_manager', 'sales_agent'],
 }))
 
-import { addLeadNote, assignLead, getLeadActivities, updateLeadWorkPlan } from './leads'
+import {
+  addLeadNote,
+  assignLead,
+  getLeadPage,
+  getLeadWorkspaceSummary,
+  getGeneralManagerDashboard,
+  getLeadActivities,
+  getSalesAgentDashboard,
+  getSalesManagerAgentPerformance,
+  updateLeadWorkPlan,
+} from './leads'
 
 const manager = {
   id: '9d3fb9d7-cd77-43d7-ad7f-b662250cad4e',
@@ -38,6 +48,7 @@ function query(result: { data: unknown; error: unknown }) {
     eq: vi.fn(),
     order: vi.fn(),
     limit: vi.fn().mockResolvedValue(result),
+    range: vi.fn().mockResolvedValue(result),
     maybeSingle: vi.fn().mockResolvedValue(result),
   }
   builder.select.mockReturnValue(builder)
@@ -156,7 +167,7 @@ describe('getLeadActivities', () => {
   })
 
   it('returns no data for a malformed lead identifier', async () => {
-    await expect(getLeadActivities('not-a-lead')).resolves.toEqual([])
+    await expect(getLeadActivities('not-a-lead')).resolves.toEqual({ activities: [], nextOffset: null })
     expect(mocks.createClient).not.toHaveBeenCalled()
   })
 
@@ -165,10 +176,19 @@ describe('getLeadActivities', () => {
     const activityQuery = query({ data: activities, error: null })
     mocks.createClient.mockResolvedValue({ from: vi.fn().mockReturnValue(activityQuery) })
 
-    await expect(getLeadActivities(leadId)).resolves.toEqual(activities)
+    await expect(getLeadActivities(leadId)).resolves.toEqual({ activities, nextOffset: null })
     expect(activityQuery.eq).toHaveBeenCalledWith('lead_id', leadId)
     expect(activityQuery.order).toHaveBeenCalledWith('created_at', { ascending: false })
-    expect(activityQuery.limit).toHaveBeenCalledWith(100)
+    expect(activityQuery.order).toHaveBeenCalledWith('id', { ascending: false })
+    expect(activityQuery.range).toHaveBeenCalledWith(0, 25)
+  })
+
+  it('returns a next offset without exposing the lookahead row', async () => {
+    const activities = Array.from({ length: 26 }, (_, index) => ({ id: `activity-${index}` }))
+    const activityQuery = query({ data: activities, error: null })
+    mocks.createClient.mockResolvedValue({ from: vi.fn().mockReturnValue(activityQuery) })
+
+    await expect(getLeadActivities(leadId)).resolves.toEqual({ activities: activities.slice(0, 25), nextOffset: 25 })
   })
 })
 
@@ -209,5 +229,139 @@ describe('updateLeadWorkPlan', () => {
     expect(leadQuery.eq).toHaveBeenCalledWith('id', leadId)
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/crm/leads')
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/crm/dashboard')
+  })
+})
+
+describe('lead dashboard aggregates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('loads the sales agent summary without reading individual leads', async () => {
+    const summary = { total_leads: 750, successful_leads: 125 }
+    const rpc = vi.fn().mockResolvedValue({ data: [summary], error: null })
+    mocks.requireRoles.mockResolvedValue({ error: null, profile: { ...manager, role: 'sales_agent' } })
+    mocks.createClient.mockResolvedValue({ rpc })
+
+    await expect(getSalesAgentDashboard()).resolves.toEqual(summary)
+    expect(rpc).toHaveBeenCalledWith('sales_agent_dashboard')
+  })
+
+  it('loads exact per-agent performance for the selected period', async () => {
+    const rows = [{ profile_id: agentProfileId, total_leads: 600, successful_leads: 80 }]
+    const rpc = vi.fn().mockResolvedValue({ data: rows, error: null })
+    mocks.requireRoles.mockResolvedValue({ error: null, profile: manager })
+    mocks.createClient.mockResolvedValue({ rpc })
+
+    await expect(getSalesManagerAgentPerformance('2026-10-01', '2026-11-01')).resolves.toEqual(rows)
+    expect(rpc).toHaveBeenCalledWith('sales_manager_agent_performance', {
+      range_start: '2026-10-01',
+      range_end: '2026-11-01',
+    })
+  })
+})
+
+describe('getLeadPage', () => {
+  it('uses a bounded database range and returns the exact visible count', async () => {
+    const rows = [{ id: leadId }]
+    const builder = {
+      select: vi.fn(),
+      order: vi.fn(),
+      gte: vi.fn(),
+      lt: vi.fn(),
+      eq: vi.fn(),
+      or: vi.fn(),
+      in: vi.fn(),
+      is: vi.fn(),
+      range: vi.fn().mockResolvedValue({ data: rows, count: 84, error: null }),
+    }
+    builder.select.mockReturnValue(builder)
+    builder.order.mockReturnValue(builder)
+    builder.gte.mockReturnValue(builder)
+    builder.lt.mockReturnValue(builder)
+    builder.eq.mockReturnValue(builder)
+    builder.or.mockReturnValue(builder)
+    builder.in.mockReturnValue(builder)
+    builder.is.mockReturnValue(builder)
+    mocks.requireRoles.mockResolvedValue({ error: null, profile: manager })
+    mocks.createClient.mockResolvedValue({ from: vi.fn().mockReturnValue(builder) })
+
+    await expect(getLeadPage({
+      rangeStart: '2026-10-01',
+      rangeEnd: '2026-11-01',
+      page: 3,
+      pageSize: 25,
+      search: 'Acme',
+      status: 'follow_up',
+      source: 'referral',
+      accountType: 'credit_line',
+      followUp: 'unscheduled',
+      timezoneOffsetMinutes: 240,
+    })).resolves.toEqual({ leads: rows, total: 84, page: 3, pageSize: 25 })
+    expect(builder.range).toHaveBeenCalledWith(50, 74)
+    expect(builder.select).toHaveBeenCalledWith(expect.any(String), { count: 'exact' })
+    expect(builder.eq).toHaveBeenCalledWith('status', 'follow_up')
+    expect(builder.eq).toHaveBeenCalledWith('source', 'referral')
+    expect(builder.eq).toHaveBeenCalledWith('account_type', 'credit_line')
+    expect(builder.or).toHaveBeenCalledWith(expect.stringContaining('company_name.ilike.%Acme%'))
+    expect(builder.in).toHaveBeenCalledWith('status', ['new', 'on_the_process', 'follow_up'])
+    expect(builder.is).toHaveBeenCalledWith('next_follow_up_at', null)
+  })
+})
+
+describe('getLeadWorkspaceSummary', () => {
+  it('requests one exact aggregate over the active filters', async () => {
+    const summary = {
+      total: 84,
+      status_counts: { new: 20, on_the_process: 10, follow_up: 10, successful: 40, deal_lost: 4 },
+      sources: [{ source: 'referral', count: 50 }],
+      top_representatives: [],
+    }
+    const rpc = vi.fn().mockResolvedValue({ data: summary, error: null })
+    mocks.requireRoles.mockResolvedValue({ error: null, profile: manager })
+    mocks.createClient.mockResolvedValue({ rpc })
+
+    await expect(getLeadWorkspaceSummary({
+      representativeId: agentProfileId,
+      status: 'successful',
+      search: 'Acme',
+      timezoneOffsetMinutes: 240,
+    })).resolves.toEqual(summary)
+    expect(rpc).toHaveBeenCalledWith('lead_workspace_summary', expect.objectContaining({
+      p_representative_id: agentProfileId,
+      p_status: 'successful',
+      p_search: 'Acme',
+    }))
+  })
+})
+
+describe('getGeneralManagerDashboard', () => {
+  it('loads transaction aggregates from one database RPC', async () => {
+    const counts = [12, 8]
+    const from = vi.fn(() => ({
+      select: vi.fn(() => ({
+        ilike: vi.fn().mockResolvedValue({ count: counts.shift(), error: null }),
+      })),
+    }))
+    const aggregates = {
+      gallons: 1200,
+      spending: 4200,
+      savings: 300,
+      daily_series: [],
+      spend_by_state: [],
+      top_locations: [],
+      recent_transactions: [],
+    }
+    const rpc = vi.fn().mockResolvedValue({ data: aggregates, error: null })
+    mocks.requireRoles.mockResolvedValue({ error: null, profile: { role: 'general_manager' } })
+    mocks.createClient.mockResolvedValue({ from, rpc })
+
+    await expect(getGeneralManagerDashboard('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'))
+      .resolves.toEqual(expect.objectContaining({ gallons_sold: 1200, spending: 4200, savings: 300 }))
+    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(rpc).toHaveBeenCalledWith('general_manager_transaction_dashboard', {
+      p_range_start: '2026-10-01T00:00:00.000Z',
+      p_range_end: '2026-11-01T00:00:00.000Z',
+    })
   })
 })

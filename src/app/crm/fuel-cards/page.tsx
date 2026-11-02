@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, ClipboardList, CreditCard, DollarSign, Ell
 import { getGeneralManagerDashboard } from '@/app/actions/leads'
 import { DashboardDateFilter } from '@/components/crm/DashboardDateFilter'
 import { FuelCardFilters, FuelCardSyncButton } from '@/components/crm/FuelCardControls'
-import { IssueFuelCardDialog } from '@/components/crm/FuelCardManagementControls'
+import { LazyIssueFuelCardDialog } from '@/components/crm/LazyIssueFuelCardDialog'
 import { FuelCardStatusChart } from '@/components/crm/FuelCardStatusChart'
 import { PaginatedTable } from '@/components/crm/ui/PaginatedTable'
 import { TablePagination } from '@/components/crm/ui/TablePagination'
@@ -123,7 +123,7 @@ export default async function FuelCardsPage({ searchParams }: { searchParams: Pr
         </div>
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
           <DashboardDateFilter from={range.from} to={range.to} path="/crm/fuel-cards" description="Choose the fuel transaction dates to include." />
-          {canManageCards && <IssueFuelCardDialog customers={customers.map(({ id, name }) => ({ id, name }))} />}
+          {canManageCards && <LazyIssueFuelCardDialog customers={customers.map(({ id, name }) => ({ id, name }))} />}
           <FuelCardSyncButton />
         </div>
       </header>

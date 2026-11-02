@@ -480,28 +480,26 @@ SOAP envelopes use SOAP 1.1 and namespace `http://com.tch.cards.service`. XML va
 
 ```mermaid
 flowchart TD
-    Start["Admin confirms sync"] --> Validate["Validate WEX environment + full-access user"]
-    Validate --> Audit["Insert running fuel_card_sync_runs row"]
-    Audit --> Login["WEX login through proxy"]
-    Login --> Parallel["Fetch cards, carrier, contracts"]
-    Parallel --> Limits["Fetch credit limits for every contract"]
-    Limits --> Windows["Fetch account + child transactions\n7-day windows over last 30 days"]
-    Windows --> Dedupe["Deduplicate by WEX transaction ID"]
-    Dedupe --> Customers["Create/reload WEX customers"]
-    Customers --> Cards["Fingerprint, match, upsert cards"]
-    Cards --> Transactions["Match and upsert transactions"]
-    Transactions --> KPIs["Refresh monthly/lifetime spend and credit KPIs"]
-    KPIs --> Verify["Count stored provider rows"]
-    Verify --> Done["Mark run succeeded with counts"]
+    Start["Admin confirms sync"] --> Enqueue["Create durable Supabase jobs"]
+    Enqueue --> Worker["Worker claims one leased job"]
+    Worker --> Account["Account snapshot job"]
+    Worker --> Window["Bounded transaction-window job"]
+    Worker --> Reconcile["Reconciliation job"]
+    Window --> Split["Split oversized responses"]
+    Account --> Persist["Match and upsert bounded batches"]
+    Window --> Persist
+    Split --> Persist
+    Persist --> KPIs["Bulk-refresh affected customer KPIs"]
+    KPIs --> Done["Complete job and advance cursor"]
 ```
 
 Detailed rules:
 
-1. `startWexSync({confirm:true})` validates configuration and authorization, then inserts an audit row with `status='running'` and queued metadata.
-2. The browser calls `executeWexSync({runId})`; the run must belong to that user and still be running.
-3. `syncWexFuelCards()` authenticates, then records stage metadata throughout the process.
-4. It requests the most recent 30 rolling days in seven-day inclusive millisecond windows. Both account and child transactions are fetched for each window.
-5. Transactions are deduplicated in a map keyed by WEX transaction ID.
+1. `startWexSync({confirm:true})` validates configuration and authorization, then atomically enqueues durable account, transaction-window, and reconciliation work.
+2. The browser polls the run audit state; processing continues independently in the internal worker.
+3. `processNextWexJob()` claims one leased job, heartbeats it, and records completion or retry state.
+4. Transaction work uses bounded cursor windows. Oversized provider responses split into smaller child jobs rather than accumulating a 30-day response in memory.
+5. Transactions are deduplicated by WEX transaction ID inside each bounded job and remain idempotent at the database constraint.
 6. Card numbers are normalized by removing non-digits (or trimming as fallback), HMAC-SHA256 fingerprinted, then discarded. Only last four and fingerprint are written.
 7. Carrier records are assembled from primary carrier info plus transaction carrier IDs.
 8. New customers are created when neither carrier ID nor company XRef already matches.
@@ -515,9 +513,9 @@ Detailed rules:
 10. Cards are upserted in batches of 250 on `(provider, card_fingerprint)`.
 11. Transactions match a saved card by fingerprint, then customer by card/customer carrier/company XRef. Transactions with no resolvable customer are skipped.
 12. Transactions are upserted in batches of 250 on `(provider, provider_transaction_id)`.
-13. Posted transaction rows refresh customer month-to-date and lifetime spend in 1,000-row pages.
+13. A service-role database function bulk-aggregates posted transaction rows and refreshes month-to-date and lifetime spend for affected customers.
 14. Active contract credit limits refresh the primary customer's credit limit and current balance.
-15. Final provider row counts are stored in sync metadata and the run is marked `succeeded`; caught failures mark it `failed`.
+15. Jobs retry transient failures, dead-letter permanent failures, and mark the parent run complete only after all required work succeeds.
 
 ### KPI formulas
 
@@ -877,7 +875,7 @@ These are current facts, not necessarily bugs the next contributor is authorized
 | Change customer list/detail | customer route pages, customer charts/tabs, WEX sync KPI mapping if provider-backed |
 | Change card filters/detail | fuel-card pages, `FuelCardControls.tsx`, WEX query schema, relevant database indexes |
 | Change transaction fields/export | transaction page, CSV route, WEX schemas/types/parser/sync, Level III migration/types/tests |
-| Change WEX operations | `client.ts`, `soap.ts`, schemas/types/tests, `sync.ts`, `docs/wex-integration.md` |
+| Change WEX operations | `client.ts`, `soap.ts`, `jobs.ts`, `job-operations.ts`, schemas/types/tests, `docs/wex-integration.md`, `docs/wex-durable-sync.md` |
 | Change Supabase access pattern | `src/lib/supabase/*`, Server Actions, RLS migrations |
 | Add shared UI | `src/components/ui/` and `components.json` |
 | Change theme/tokens | `src/app/globals.css`, chart/status mappings |

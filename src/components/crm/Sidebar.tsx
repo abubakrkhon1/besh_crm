@@ -46,6 +46,8 @@ export function Sidebar({ profile }: { profile: Profile }) {
         { name: 'Savings Pricing', href: '/crm/savings-pricing', icon: Tags },
         ...baseNavigation.slice(5),
       ]
+    : profile.role === 'admin'
+      ? [...baseNavigation.slice(0, 5), { name: 'Savings Pricing', href: '/crm/savings-pricing', icon: Tags }, ...baseNavigation.slice(5)]
     : baseNavigation
 
   return (

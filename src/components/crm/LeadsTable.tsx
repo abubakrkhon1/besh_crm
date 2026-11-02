@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarClock, Check, ChevronDown, Clock, Loader2, Mail, MessageSquare, Pencil, Phone, UserRound, UserRoundPlus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -93,6 +93,11 @@ interface LeadsTableProps {
   canManageWorkPlan?: boolean
   showFilters?: boolean
   openNewLead?: boolean
+  totalLeads?: number
+  page?: number
+  pageSize?: number
+  onPageChange?: (page: number) => void
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 export function LeadsTable({
@@ -107,6 +112,11 @@ export function LeadsTable({
   canManageWorkPlan = false,
   showFilters = false,
   openNewLead = false,
+  totalLeads,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
 }: LeadsTableProps) {
   const router = useRouter()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -220,6 +230,12 @@ export function LeadsTable({
         columnCount={showRepresentative ? 11 : 10}
         itemLabel="leads"
         emptyMessage="No leads match the current filters."
+        totalItems={totalLeads}
+        currentPage={page}
+        initialPageSize={pageSize}
+        pageSizes={[10, 25, 50, 100]}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
       />
 
       <LeadDetailsSheet
@@ -237,7 +253,7 @@ export function LeadsTable({
   )
 }
 
-function LeadDetailsSheet({
+export function LeadDetailsSheet({
   lead,
   onOpenChange,
   onUpdated,
@@ -283,14 +299,21 @@ function LeadDetailsSheetContent({
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const queryClient = useQueryClient()
-  const { data: activities = [], isLoading: activitiesLoading } = useQuery({
+  const {
+    data: activityPages,
+    isLoading: activitiesLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['lead-activities', lead.id],
-    queryFn: () => getLeadActivities(lead.id),
+    queryFn: ({ pageParam }) => getLeadActivities(lead.id, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
-    refetchInterval: 15_000,
-    refetchIntervalInBackground: false,
   })
+  const activities = activityPages?.pages.flatMap((activityPage) => activityPage.activities) ?? []
 
   useEffect(() => {
     const supabase = createClient()
@@ -408,13 +431,19 @@ function LeadDetailsSheetContent({
               ) : (
                 <>
                   {activities.map((activity) => <StoredActivityItem key={activity.id} activity={activity} />)}
-                  {!activities.some((activity) => activity.activity_type === 'lead_created') && (
+                  {hasNextPage && (
+                    <Button type="button" variant="outline" size="sm" disabled={isFetchingNextPage} onClick={() => { void fetchNextPage() }}>
+                      {isFetchingNextPage ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Clock data-icon="inline-start" />}
+                      {isFetchingNextPage ? 'Loading…' : 'Load older activity'}
+                    </Button>
+                  )}
+                  {!hasNextPage && !activities.some((activity) => activity.activity_type === 'lead_created') && (
                     <ActivityItem icon={UserRound} title="Lead created" detail={`via ${formatLabel(lead.source)}`} date={lead.created_at} />
                   )}
-                  {!activities.length && statusDate && (
+                  {!hasNextPage && !activities.length && statusDate && (
                     <ActivityItem icon={Clock} title={`Marked ${statusLabels[lead.status]}`} detail="Status updated" date={statusDate} />
                   )}
-                  {!activities.length && lead.assigned_at && lead.representative && (
+                  {!hasNextPage && !activities.length && lead.assigned_at && lead.representative && (
                     <ActivityItem
                       icon={UserRoundPlus}
                       title={`Assigned to ${lead.representative.full_name ?? lead.representative.email ?? 'sales agent'}`}

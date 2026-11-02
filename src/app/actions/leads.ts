@@ -15,15 +15,147 @@ import {
   UpdateLeadField,
 } from '@/lib/validation/leads'
 import { Lead, LeadActivity, Profile } from '@/types/database.types'
+import type { LeadFollowUpBucket } from '@/lib/leads/follow-up'
 
 export type LeadWithRepresentative = Lead & {
   representative?: Pick<Profile, 'id' | 'full_name' | 'email'> | null
+}
+
+export type LeadPage = {
+  leads: LeadWithRepresentative[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export type LeadWorkspaceSummary = {
+  total: number
+  status_counts: Record<Lead['status'], number>
+  follow_up_counts: Record<LeadFollowUpBucket, number>
+  sources: Array<{ source: string; count: number }>
+  top_representatives: Array<{ id: string | null; name: string; count: number }>
+}
+
+type LeadWorkspaceFilters = {
+  representativeId?: string
+  rangeStart?: string
+  rangeEnd?: string
+  search?: string
+  status?: Lead['status']
+  source?: string
+  accountType?: Lead['account_type']
+  followUp?: LeadFollowUpBucket
+  timezoneOffsetMinutes?: number
+}
+
+function getFollowUpBoundaries(timezoneOffsetMinutes = 0) {
+  const now = new Date()
+  const safeOffset = Math.min(840, Math.max(-840, Math.trunc(timezoneOffsetMinutes)))
+  const localNow = new Date(now.getTime() - safeOffset * 60_000)
+  const nextLocalDay = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate() + 1)
+  return {
+    now: now.toISOString(),
+    nextDayStart: new Date(nextLocalDay + safeOffset * 60_000).toISOString(),
+  }
+}
+
+function sanitizeLeadSearch(search?: string) {
+  return search?.trim().replace(/[^\p{L}\p{N}@+\-\s]/gu, ' ').replace(/\s+/g, ' ').slice(0, 100) || undefined
+}
+
+export async function getLeadPage({
+  representativeId,
+  rangeStart,
+  rangeEnd,
+  page = 1,
+  pageSize = 25,
+  search,
+  status,
+  source,
+  accountType,
+  followUp,
+  timezoneOffsetMinutes = 0,
+}: LeadWorkspaceFilters & {
+  page?: number
+  pageSize?: number
+}): Promise<LeadPage> {
+  const safePage = Math.max(1, Math.floor(page))
+  const safePageSize = Math.min(100, Math.max(10, Math.floor(pageSize)))
+  const { error } = await requireRoles(CRM_ROLES)
+  if (error) return { leads: [], total: 0, page: safePage, pageSize: safePageSize }
+
+  const first = (safePage - 1) * safePageSize
+  let query = (await createClient())
+    .from('leads')
+    .select('*, representative:profiles!leads_assigned_to_profile_id_fkey(id, full_name, email)', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+
+  if (representativeId) query = query.eq('assigned_to_profile_id', representativeId)
+  if (rangeStart) query = query.gte('created_at', rangeStart)
+  if (rangeEnd) query = query.lt('created_at', rangeEnd)
+  if (status) query = query.eq('status', status)
+  if (source) query = query.eq('source', source)
+  if (accountType) query = query.eq('account_type', accountType)
+  if (followUp) {
+    query = query.in('status', ['new', 'on_the_process', 'follow_up'])
+    const { now, nextDayStart } = getFollowUpBoundaries(timezoneOffsetMinutes)
+
+    if (followUp === 'unscheduled') query = query.is('next_follow_up_at', null)
+    if (followUp === 'overdue') query = query.lt('next_follow_up_at', now)
+    if (followUp === 'today') query = query.gte('next_follow_up_at', now).lt('next_follow_up_at', nextDayStart)
+    if (followUp === 'upcoming') query = query.gte('next_follow_up_at', nextDayStart)
+  }
+  const safeSearch = sanitizeLeadSearch(search)
+  if (safeSearch) {
+    const pattern = `%${safeSearch}%`
+    query = query.or(`company_name.ilike.${pattern},contact_first_name.ilike.${pattern},contact_last_name.ilike.${pattern},email.ilike.${pattern},phone.ilike.${pattern}`)
+  }
+
+  const { data, count, error: queryError } = await query.range(first, first + safePageSize - 1)
+  if (queryError) {
+    console.error('getLeadPage:', queryError)
+    return { leads: [], total: 0, page: safePage, pageSize: safePageSize }
+  }
+
+  return {
+    leads: data as unknown as LeadWithRepresentative[],
+    total: count ?? 0,
+    page: safePage,
+    pageSize: safePageSize,
+  }
+}
+
+export async function getLeadWorkspaceSummary(filters: LeadWorkspaceFilters): Promise<LeadWorkspaceSummary | null> {
+  const { error } = await requireRoles(CRM_ROLES)
+  if (error) return null
+
+  const { now, nextDayStart } = getFollowUpBoundaries(filters.timezoneOffsetMinutes)
+  const { data, error: queryError } = await (await createClient()).rpc('lead_workspace_summary', {
+    p_representative_id: filters.representativeId,
+    p_range_start: filters.rangeStart,
+    p_range_end: filters.rangeEnd,
+    p_search: sanitizeLeadSearch(filters.search),
+    p_status: filters.status,
+    p_source: filters.source,
+    p_account_type: filters.accountType,
+    p_follow_up: filters.followUp,
+    p_now: now,
+    p_next_day_start: nextDayStart,
+  })
+  if (queryError) {
+    console.error('getLeadWorkspaceSummary:', queryError)
+    return null
+  }
+
+  return data as LeadWorkspaceSummary
 }
 
 export async function getLeads(
   representativeId?: string,
   rangeStart?: string,
   rangeEnd?: string,
+  limit?: number,
 ): Promise<LeadWithRepresentative[]> {
   const { error } = await requireRoles(CRM_ROLES)
   if (error) return []
@@ -37,6 +169,7 @@ export async function getLeads(
   if (representativeId) query = query.eq('assigned_to_profile_id', representativeId)
   if (rangeStart) query = query.gte('created_at', rangeStart)
   if (rangeEnd) query = query.lt('created_at', rangeEnd)
+  if (limit) query = query.limit(Math.min(Math.max(limit, 1), 500))
 
   const { data, error: queryError } = await query
   if (queryError) {
@@ -54,7 +187,7 @@ export async function getSalesAgents(): Promise<Profile[]> {
   const supabase = await createClient()
   let query = supabase
     .from('profiles')
-    .select('*')
+    .select('id, auth_user_id, full_name, email, role, avatar_url, department, is_active, customer_id, manager_profile_id, created_at, updated_at')
     .eq('role', 'sales_agent')
     .eq('is_active', true)
 
@@ -177,23 +310,37 @@ export async function updateLeadWorkPlan(
   return { success: true }
 }
 
-export async function getLeadActivities(leadId: string): Promise<LeadActivity[]> {
+export type LeadActivityPage = {
+  activities: LeadActivity[]
+  nextOffset: number | null
+}
+
+export async function getLeadActivities(leadId: string, offset = 0, pageSize = 25): Promise<LeadActivityPage> {
   const { error } = await requireRoles(CRM_ROLES)
-  if (error || !zUuid(leadId)) return []
+  if (error || !zUuid(leadId)) return { activities: [], nextOffset: null }
+
+  const safeOffset = Math.max(0, Math.floor(offset) || 0)
+  const safePageSize = Math.min(50, Math.max(10, Math.floor(pageSize) || 25))
 
   const { data, error: queryError } = await (await createClient())
     .from('lead_activities')
     .select('*')
     .eq('lead_id', leadId)
     .order('created_at', { ascending: false })
-    .limit(100)
+    .order('id', { ascending: false })
+    .range(safeOffset, safeOffset + safePageSize)
 
   if (queryError) {
     console.error('getLeadActivities:', queryError)
-    return []
+    return { activities: [], nextOffset: null }
   }
 
-  return data as LeadActivity[]
+  const rows = (data ?? []) as LeadActivity[]
+  const hasMore = rows.length > safePageSize
+  return {
+    activities: hasMore ? rows.slice(0, safePageSize) : rows,
+    nextOffset: hasMore ? safeOffset + safePageSize : null,
+  }
 }
 
 export type AddLeadNoteState = {
@@ -375,19 +522,41 @@ export async function getGeneralManagerDashboard(rangeStart: string, rangeEnd: s
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null
 
   const supabase = await createClient()
-  const [activeCardsResult, activeCustomersResult, transactionTotals] = await Promise.all([
+  const [activeCardsResult, activeCustomersResult, transactionResult] = await Promise.all([
     supabase.from('fuel_cards').select('id', { count: 'exact', head: true }).ilike('status', 'active'),
     supabase.from('customers').select('id', { count: 'exact', head: true }).ilike('status', 'active'),
-    getDashboardTransactionTotals(supabase, rangeStart, rangeEnd),
+    supabase.rpc('general_manager_transaction_dashboard', {
+      p_range_start: rangeStart,
+      p_range_end: rangeEnd,
+    }),
   ])
 
-  if (activeCardsResult.error || activeCustomersResult.error || transactionTotals.error) {
+  if (activeCardsResult.error || activeCustomersResult.error || transactionResult.error) {
     console.error('getGeneralManagerDashboard:', {
       activeCards: activeCardsResult.error,
       activeCustomers: activeCustomersResult.error,
-      transactions: transactionTotals.error,
+      transactions: transactionResult.error,
     })
     return null
+  }
+
+  const transactionTotals = transactionResult.data as {
+    gallons: number
+    spending: number
+    savings: number
+    daily_series: Array<{ date: string; gallons: number; spending: number }>
+    spend_by_state: Array<{ state: string; amount: number }>
+    top_locations: Array<{ name: string; gallons: number; spending: number }>
+    recent_transactions: Array<{
+      id: string
+      transaction_date: string
+      merchant_name: string | null
+      merchant_state: string | null
+      gallons: number | null
+      amount: number
+      savings: number
+      fuel_card: { card_last4: string | null } | null
+    }>
   }
 
   return {
@@ -396,152 +565,77 @@ export async function getGeneralManagerDashboard(rangeStart: string, rangeEnd: s
     active_customers: activeCustomersResult.count ?? 0,
     spending: transactionTotals.spending,
     savings: transactionTotals.savings,
-    daily_series: transactionTotals.dailySeries,
-    spend_by_state: transactionTotals.spendByState,
-    top_locations: transactionTotals.topLocations,
-    recent_transactions: transactionTotals.recentTransactions,
+    daily_series: transactionTotals.daily_series,
+    spend_by_state: transactionTotals.spend_by_state,
+    top_locations: transactionTotals.top_locations,
+    recent_transactions: transactionTotals.recent_transactions,
   }
 }
 
-async function getDashboardTransactionTotals(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  rangeStart: string,
-  rangeEnd: string,
-) {
-  const pageSize = 1_000
-  let offset = 0
-  let gallons = 0
-  let spending = 0
-  let savings = 0
-  const dailyTotals = new Map<string, { gallons: number; spending: number }>()
-  const stateTotals = new Map<string, number>()
-  const locationTotals = new Map<string, { gallons: number; spending: number }>()
-  const recentTransactions: Array<{
-    id: string
-    transaction_date: string
-    merchant_name: string | null
-    merchant_state: string | null
-    fuel_card_id: string | null
-    gallons: number | null
-    amount: number
-    savings: number
-  }> = []
-
-  while (true) {
-    const { data, error } = await supabase
-      .from('fuel_transactions')
-      .select('id,fuel_card_id,gallons,amount,savings,transaction_date,merchant_name,merchant_state')
-      .eq('status', 'posted')
-      .gte('transaction_date', rangeStart)
-      .lt('transaction_date', rangeEnd)
-      .order('transaction_date')
-      .order('id')
-      .range(offset, offset + pageSize - 1)
-
-    if (error) {
-      return {
-        gallons: 0,
-        spending: 0,
-        savings: 0,
-        dailySeries: [],
-        spendByState: [],
-        topLocations: [],
-        recentTransactions: [],
-        error,
-      }
-    }
-
-    for (const transaction of data ?? []) {
-      const transactionGallons = Number(transaction.gallons ?? 0)
-      const transactionSpending = Number(transaction.amount ?? 0)
-      const transactionSavings = Number(transaction.savings ?? 0)
-      const day = transaction.transaction_date.slice(0, 10)
-      const state = transaction.merchant_state?.trim().toUpperCase() || 'Other'
-      const location = transaction.merchant_name?.trim() || 'Unknown location'
-
-      gallons += transactionGallons
-      spending += transactionSpending
-      savings += transactionSavings
-
-      const daily = dailyTotals.get(day) ?? { gallons: 0, spending: 0 }
-      daily.gallons += transactionGallons
-      daily.spending += transactionSpending
-      dailyTotals.set(day, daily)
-
-      stateTotals.set(state, (stateTotals.get(state) ?? 0) + transactionSpending)
-
-      const locationTotal = locationTotals.get(location) ?? { gallons: 0, spending: 0 }
-      locationTotal.gallons += transactionGallons
-      locationTotal.spending += transactionSpending
-      locationTotals.set(location, locationTotal)
-
-      recentTransactions.push({
-        id: transaction.id,
-        transaction_date: transaction.transaction_date,
-        merchant_name: transaction.merchant_name,
-        merchant_state: transaction.merchant_state,
-        fuel_card_id: transaction.fuel_card_id,
-        gallons: transaction.gallons,
-        amount: transaction.amount,
-        savings: transaction.savings,
-      })
-      if (recentTransactions.length > 5) recentTransactions.shift()
-    }
-
-    if ((data?.length ?? 0) < pageSize) break
-    offset += pageSize
-  }
-
-  const dailySeries = [...dailyTotals.entries()].map(([date, totals]) => ({ date, ...totals }))
-  const spendByState = [...stateTotals.entries()]
-    .map(([state, amount]) => ({ state, amount }))
-    .sort((a, b) => b.amount - a.amount)
-  const topLocations = [...locationTotals.entries()]
-    .map(([name, totals]) => ({ name, ...totals }))
-    .sort((a, b) => b.gallons - a.gallons)
-    .slice(0, 5)
-  const orderedRecentTransactions = recentTransactions.reverse()
-  const recentFuelCardIds = [...new Set(
-    orderedRecentTransactions
-      .map((transaction) => transaction.fuel_card_id)
-      .filter((fuelCardId): fuelCardId is string => Boolean(fuelCardId)),
-  )]
-  const { data: recentFuelCards, error: recentFuelCardsError } = recentFuelCardIds.length
-    ? await supabase.from('fuel_cards').select('id,card_last4').in('id', recentFuelCardIds)
-    : { data: [], error: null }
-
-  if (recentFuelCardsError) console.error('getDashboardTransactionTotals fuel cards:', recentFuelCardsError)
-
-  const fuelCardsById = new Map(
-    (recentFuelCards ?? []).map((fuelCard) => [fuelCard.id, { card_last4: fuelCard.card_last4 }]),
-  )
-  const recentTransactionsWithCards = orderedRecentTransactions.map(({ fuel_card_id, ...transaction }) => ({
-    ...transaction,
-    fuel_card: fuel_card_id ? fuelCardsById.get(fuel_card_id) ?? null : null,
-  }))
-
-  return {
-    gallons,
-    spending,
-    savings,
-    dailySeries,
-    spendByState,
-    topLocations,
-    recentTransactions: recentTransactionsWithCards,
-    error: null,
-  }
-}
-
-export async function getSalesManagerDashboard() {
+export async function getSalesManagerDashboard(rangeStart?: string, rangeEnd?: string) {
   const { error } = await requireRoles(['sales_manager'])
   if (error) return null
 
   const supabase = await createClient()
-  const { data, error: queryError } = await supabase.rpc('sales_manager_dashboard')
+  const { data, error: queryError } = await supabase.rpc('sales_manager_dashboard', {
+    range_start: rangeStart,
+    range_end: rangeEnd,
+  })
   if (queryError) {
     console.error('getSalesManagerDashboard:', queryError)
     return null
   }
 
   return data?.[0] ?? null
+}
+
+export type SalesAgentDashboardSummary = {
+  total_leads: number
+  new_leads: number
+  in_process_leads: number
+  follow_up_leads: number
+  successful_leads: number
+  deal_lost_leads: number
+  estimated_monthly_gallons: number
+}
+
+export async function getSalesAgentDashboard(): Promise<SalesAgentDashboardSummary | null> {
+  const { error } = await requireRoles(['sales_agent'])
+  if (error) return null
+
+  const { data, error: queryError } = await (await createClient()).rpc('sales_agent_dashboard')
+  if (queryError) {
+    console.error('getSalesAgentDashboard:', queryError)
+    return null
+  }
+
+  return data?.[0] ?? null
+}
+
+export type SalesManagerAgentPerformance = {
+  profile_id: string | null
+  total_leads: number
+  accepted_leads: number
+  successful_leads: number
+  estimated_monthly_gallons: number
+  last_activity: string | null
+}
+
+export async function getSalesManagerAgentPerformance(
+  rangeStart: string,
+  rangeEnd: string,
+): Promise<SalesManagerAgentPerformance[] | null> {
+  const { error } = await requireRoles(['sales_manager'])
+  if (error) return null
+
+  const { data, error: queryError } = await (await createClient()).rpc('sales_manager_agent_performance', {
+    range_start: rangeStart,
+    range_end: rangeEnd,
+  })
+  if (queryError) {
+    console.error('getSalesManagerAgentPerformance:', queryError)
+    return null
+  }
+
+  return data ?? []
 }

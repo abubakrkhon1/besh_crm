@@ -51,3 +51,9 @@ export const applicationSubmissionSchema = z.object({
 })
 
 export type ApplicationSubmission = z.infer<typeof applicationSubmissionSchema>
+
+export const applicationReviewSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(['approved', 'denied']),
+  denialReason: z.string().trim().max(2_000).optional(),
+})

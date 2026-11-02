@@ -1,15 +1,15 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   CheckCircle2, CircleGauge, Clock3, Download, Ellipsis,
   FileCheck2, RefreshCw, Search, X
 } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
 import type { ApplicationSafe } from '@/lib/application-access'
-import { createCsv } from '@/lib/csv'
+import type { ApplicationSummary } from '@/app/actions/applications'
 import { ApplicationDrawer } from './drawers/ApplicationDrawer'
 import { InviteApplicationDialog } from './InviteApplicationDialog'
 import { ApplicationPipelineChart } from './EntityOverviewCharts'
@@ -23,44 +23,28 @@ import { cn } from '@/lib/utils'
 
 type DateFilter = 'all' | 'this_month' | 'last_30_days'
 
-export function ApplicationsTable({ initialApplications }: { initialApplications: ApplicationSafe[] }) {
+export function ApplicationsTable({ applications, total, page, pageSize, summary, initialSearch, initialStatus, initialDateFilter }: {
+  applications: ApplicationSafe[]
+  total: number
+  page: number
+  pageSize: number
+  summary: ApplicationSummary
+  initialSearch: string
+  initialStatus: string
+  initialDateFilter: DateFilter
+}) {
   const router = useRouter()
-  const [applications, setApplications] = useState<ApplicationSafe[]>(initialApplications)
+  const searchParams = useSearchParams()
   const [selectedApp, setSelectedApp] = useState<ApplicationSafe | null>(null)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all')
-
-  useEffect(() => {
-    // Server refreshes replace the live application snapshot.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setApplications(initialApplications)
-  }, [initialApplications])
-
-  const now = useMemo(() => new Date(), [])
-  const monthStart = useMemo(() => new Date(now.getFullYear(), now.getMonth(), 1), [now])
-  const last30Start = useMemo(() => new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29), [now])
-
-  const counts = useMemo(() => ({
-    pending: applications.filter((a) => a.status === 'pending').length,
-    approved: applications.filter((a) => a.status === 'approved').length,
-    denied: applications.filter((a) => a.status === 'denied').length,
-    underReview: applications.filter((a) => a.status === 'under_review').length,
-    needsDocuments: applications.filter((a) => a.status === 'needs_documents').length,
-  }), [applications])
-
-  const approvedThisMonth = applications.filter((a) => a.status === 'approved' && new Date(a.reviewed_at ?? a.updated_at) >= monthStart).length
+  const [search, setSearch] = useState(initialSearch)
+  const [statusFilter, setStatusFilter] = useState(initialStatus)
+  const [dateFilter, setDateFilter] = useState<DateFilter>(initialDateFilter)
+  const counts = summary
+  const approvedThisMonth = summary.approvedThisMonth
   const decisions = counts.approved + counts.denied
   const approvalRate = decisions ? Math.round(counts.approved / decisions * 100) : 0
 
-  const filteredApplications = useMemo(() => applications.filter((application) => {
-    const normalizedSearch = search.trim().toLowerCase()
-    const matchesSearch = !normalizedSearch || [application.company_legal_name, application.doing_business_as, application.first_name, application.last_name, application.email].some((value) => value?.toLowerCase().includes(normalizedSearch))
-    const matchesStatus = statusFilter === 'all' || application.status === statusFilter
-    const createdAt = new Date(application.created_at)
-    const matchesDate = dateFilter === 'all' || (dateFilter === 'this_month' ? createdAt >= monthStart : createdAt >= last30Start)
-    return matchesSearch && matchesStatus && matchesDate
-  }), [applications, dateFilter, last30Start, monthStart, search, statusFilter])
+  const filteredApplications = applications
 
   const columns: ColumnDef<ApplicationSafe>[] = [
     {
@@ -92,16 +76,26 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
     { id: 'actions', header: '', cell: ({ row }) => <Link href={`/crm/applications/${row.original.id}`} onClick={(e) => e.stopPropagation()} aria-label={`Open ${row.original.company_legal_name}`} className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}><Ellipsis /></Link> },
   ]
 
-  const exportApplications = () => {
-    const headers = ['Company', 'Contact', 'Email', 'Fleet Size', 'Submitted', 'Projected Spend', 'Status']
-    const rows = filteredApplications.map((a) => [a.company_legal_name, `${a.first_name} ${a.last_name}`, a.email, a.total_trucks, a.submitted_at ?? a.created_at, a.projected_spend, a.status])
-    const csv = createCsv([headers, ...rows])
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    const a = document.createElement('a'); a.href = url; a.download = `applications-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(url)
+  const updateParams = (updates: Record<string, string | null>, resetPage = true) => {
+    const next = new URLSearchParams(searchParams)
+    for (const [name, value] of Object.entries(updates)) {
+      if (!value || value === 'all') next.delete(name)
+      else next.set(name, value)
+    }
+    if (resetPage) next.delete('page')
+    router.push(`/crm/applications?${next}`)
   }
 
-  const clearFilters = () => { setSearch(''); setStatusFilter('all'); setDateFilter('all') }
+  const clearFilters = () => {
+    setSearch(''); setStatusFilter('all'); setDateFilter('all')
+    updateParams({ q: null, status: null, date: null })
+  }
   const hasFilters = search || statusFilter !== 'all' || dateFilter !== 'all'
+  const applicationTotal = counts.pending + counts.underReview + counts.needsDocuments + counts.approved + counts.denied
+  const exportParams = new URLSearchParams(searchParams)
+  exportParams.delete('page')
+  exportParams.delete('pageSize')
+  const exportHref = `/api/applications/export?${exportParams}`
 
   return (
     <div className="flex animate-fade-in flex-col gap-4 pb-8">
@@ -111,8 +105,8 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
           <p className="mt-0.5 text-[13px] text-muted-foreground">Review incoming fleet requests, documents, and underwriting decisions.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={exportApplications} disabled={!filteredApplications.length}>
-            <Download data-icon="inline-start" />Export
+          <Button render={<a href={exportHref} />} variant="outline" size="sm" aria-disabled={!total} className={!total ? 'pointer-events-none opacity-50' : undefined}>
+            <Download data-icon="inline-start" />Export filtered
           </Button>
           <Button variant="outline" size="sm" onClick={() => router.refresh()}>
             <RefreshCw data-icon="inline-start" />Refresh
@@ -166,13 +160,15 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
                   <Input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
+                    onBlur={() => updateParams({ q: search.trim() })}
+                    onKeyDown={(event) => { if (event.key === 'Enter') updateParams({ q: search.trim() }) }}
                     className="h-10 pl-9 text-[12px]"
                     placeholder="Search applications, companies, or contacts…"
                     aria-label="Search applications"
                   />
                 </label>
                 <div className="flex flex-wrap items-center gap-2">
-                  <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
+                  <FilterSelect label="Status" value={statusFilter} onChange={(value) => { setStatusFilter(value); updateParams({ status: value }) }}>
                     <NativeSelectOption value="all">All</NativeSelectOption>
                     <NativeSelectOption value="pending">Pending</NativeSelectOption>
                     <NativeSelectOption value="under_review">Under review</NativeSelectOption>
@@ -180,7 +176,7 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
                     <NativeSelectOption value="approved">Approved</NativeSelectOption>
                     <NativeSelectOption value="denied">Denied</NativeSelectOption>
                   </FilterSelect>
-                  <FilterSelect label="Date" value={dateFilter} onChange={(v) => setDateFilter(v as DateFilter)}>
+                  <FilterSelect label="Date" value={dateFilter} onChange={(v) => { setDateFilter(v as DateFilter); updateParams({ date: v }) }}>
                     <NativeSelectOption value="all">All time</NativeSelectOption>
                     <NativeSelectOption value="this_month">This month</NativeSelectOption>
                     <NativeSelectOption value="last_30_days">Last 30 days</NativeSelectOption>
@@ -203,6 +199,11 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
                 emptyTitle="No applications found"
                 emptyDescription="No applications match the current filters."
                 embedded
+                totalRows={total}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={(nextPage) => updateParams({ page: nextPage > 1 ? String(nextPage) : null }, false)}
+                onPageSizeChange={(nextPageSize) => updateParams({ pageSize: String(nextPageSize) })}
               />
             </CardContent>
           </Card>
@@ -219,10 +220,10 @@ export function ApplicationsTable({ initialApplications }: { initialApplications
               <ApplicationPipelineChart counts={{ pending: counts.pending, approved: counts.approved, denied: counts.denied }} />
               <div className="mt-2 flex flex-col gap-2">
                 {[
-                  { label: 'Pending', count: counts.pending, pct: applications.length ? Math.round(counts.pending / applications.length * 100) : 0, color: 'bg-[#f97316]' },
-                  { label: 'Under Review', count: counts.underReview, pct: applications.length ? Math.round(counts.underReview / applications.length * 100) : 0, color: 'bg-[#2563eb]' },
+                  { label: 'Pending', count: counts.pending, pct: applicationTotal ? Math.round(counts.pending / applicationTotal * 100) : 0, color: 'bg-[#f97316]' },
+                  { label: 'Under Review', count: counts.underReview, pct: applicationTotal ? Math.round(counts.underReview / applicationTotal * 100) : 0, color: 'bg-[#2563eb]' },
                   { label: 'Approved', count: counts.approved, pct: decisions ? Math.round(counts.approved / decisions * 100) : 0, color: 'bg-[#14b8a6]' },
-                  { label: 'Needs Docs', count: counts.needsDocuments, pct: applications.length ? Math.round(counts.needsDocuments / applications.length * 100) : 0, color: 'bg-[#a855f7]' },
+                  { label: 'Needs Docs', count: counts.needsDocuments, pct: applicationTotal ? Math.round(counts.needsDocuments / applicationTotal * 100) : 0, color: 'bg-[#a855f7]' },
                   { label: 'Rejected', count: counts.denied, pct: decisions ? Math.round(counts.denied / decisions * 100) : 0, color: 'bg-destructive' },
                 ].map(({ label, count, pct, color }) => (
                   <div key={label} className="flex items-center gap-2 text-xs">

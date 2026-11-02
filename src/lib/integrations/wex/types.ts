@@ -18,15 +18,6 @@ export type WexCard = {
   cardSubfleet: string | null
 }
 
-export type WexSyncResult = {
-  received: number
-  created: number
-  updated: number
-  unmatched: number
-  customers: number
-  transactions: number
-}
-
 export type WexTransaction = {
   transactionId: string
   carrierId: string

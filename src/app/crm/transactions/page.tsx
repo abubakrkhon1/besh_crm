@@ -61,25 +61,32 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   const range = getDateRange(params.from, params.to)
   const db = await createClient()
 
-  let matchedCustomerIds: string[] = []
-  let matchedCardIds: string[] = []
-  let matchedDriverIds: string[] = []
+  let searchIds: string[] | null = null
+  let searchTotal: number | null = null
+  let searchError: unknown = null
   if (q) {
-    const safe = q.replace(/[%(),]/g, '')
-    const [customerMatches, cardMatches, driverMatches] = await Promise.all([
-      db.from('customers').select('id').or(`company_name.ilike.%${safe}%,contact_name.ilike.%${safe}%`).limit(100),
-      db.from('fuel_cards').select('id').or(`card_last4.ilike.%${safe}%,driver_name.ilike.%${safe}%`).limit(100),
-      db.from('drivers').select('id').or(`first_name.ilike.%${safe}%,last_name.ilike.%${safe}%`).limit(100),
-    ])
-    matchedCustomerIds = (customerMatches.data ?? []).map((item) => item.id)
-    matchedCardIds = (cardMatches.data ?? []).map((item) => item.id)
-    matchedDriverIds = (driverMatches.data ?? []).map((item) => item.id)
+    const searchResult = await db.rpc('search_fuel_transaction_page', {
+      p_query: q.replace(/[%(),_]/g, ''),
+      p_provider: 'wex_efs',
+      p_range_start: range.rangeStart,
+      p_range_end: range.rangeEnd,
+      p_status: status || null,
+      p_customer_id: customerId ?? null,
+      p_card_id: cardId ?? null,
+      p_fuel_type: fuelType || null,
+      p_limit: pageSize,
+      p_offset: offset,
+    })
+    searchError = searchResult.error
+    const searchRows = (searchResult.data ?? []) as Array<{ id: string; total_count: number | string }>
+    searchIds = searchRows.map((row) => row.id)
+    searchTotal = searchRows.length ? Number(searchRows[0].total_count) : 0
   }
 
   const transactionSelect = 'id,provider_transaction_id,customer_id,driver_id,fuel_card_id,merchant_name,merchant_address,merchant_state,gallons,amount,savings,status,transaction_date,provider_transaction_type,customers(company_name,contact_name),fuel_cards(card_last4,driver_name),drivers(first_name,last_name)'
   let tableQuery: any = db
     .from('fuel_transactions')
-    .select(transactionSelect, { count: 'exact' })
+    .select(transactionSelect, q ? undefined : { count: 'exact' })
     .eq('provider', 'wex_efs')
     .gte('transaction_date', range.rangeStart)
     .lt('transaction_date', range.rangeEnd)
@@ -88,37 +95,31 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   if (customerId) tableQuery = tableQuery.eq('customer_id', customerId)
   if (cardId) tableQuery = tableQuery.eq('fuel_card_id', cardId)
   if (fuelType) tableQuery = tableQuery.eq('provider_transaction_type', fuelType)
-  if (q) {
-    const safe = q.replace(/[%(),]/g, '')
-    const relatedFilters = [
-      matchedCustomerIds.length && `customer_id.in.(${matchedCustomerIds.join(',')})`,
-      matchedCardIds.length && `fuel_card_id.in.(${matchedCardIds.join(',')})`,
-      matchedDriverIds.length && `driver_id.in.(${matchedDriverIds.join(',')})`,
-    ].filter(Boolean)
-    tableQuery = tableQuery.or([
-      `provider_transaction_id.ilike.%${safe}%`,
-      `merchant_name.ilike.%${safe}%`,
-      `merchant_state.ilike.%${safe}%`,
-      `wex_carrier_id.ilike.%${safe}%`,
-      ...relatedFilters,
-    ].join(','))
-  }
+  if (searchIds) tableQuery = searchIds.length ? tableQuery.in('id', searchIds) : null
 
   const previousDuration = Date.parse(range.rangeEnd) - Date.parse(range.rangeStart)
   const previousStart = new Date(Date.parse(range.rangeStart) - previousDuration).toISOString()
   const [tableResult, summaryResult, customerResult, cardResult] = await Promise.all([
-    tableQuery.order('transaction_date', { ascending: false }).range(offset, offset + pageSize - 1),
+    tableQuery
+      ? (q
+          ? tableQuery.order('transaction_date', { ascending: false }).order('id', { ascending: false })
+          : tableQuery.order('transaction_date', { ascending: false }).range(offset, offset + pageSize - 1))
+      : Promise.resolve({ data: [], count: null, error: null }),
     db.rpc('get_transaction_period_summary', {
       p_provider: 'wex_efs', p_range_start: range.rangeStart,
       p_range_end: range.rangeEnd, p_previous_start: previousStart,
     }),
-    db.from('customers').select('id,company_name,contact_name').order('company_name').range(0, 9_999),
-    db.from('fuel_cards').select('id,card_last4,driver_name').eq('provider', 'wex_efs').order('card_last4').range(0, 9_999),
+    customerId
+      ? db.from('customers').select('id,company_name,contact_name').eq('id', customerId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    cardId
+      ? db.from('fuel_cards').select('id,card_last4,driver_name').eq('provider', 'wex_efs').eq('id', cardId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ])
 
   const transactions = (tableResult.data ?? []) as TransactionRow[]
-  const customers = (customerResult.data ?? []).map((customer) => ({ value: customer.id, label: customer.company_name ?? customer.contact_name ?? 'Unnamed customer' }))
-  const cards = (cardResult.data ?? []).map((card) => ({ value: card.id, label: `•••• ${card.card_last4}${card.driver_name ? ` · ${card.driver_name}` : ''}` }))
+  const customers = customerResult.data ? [{ value: customerResult.data.id, label: customerResult.data.company_name ?? customerResult.data.contact_name ?? 'Unnamed customer' }] : []
+  const cards = cardResult.data ? [{ value: cardResult.data.id, label: `•••• ${cardResult.data.card_last4}${cardResult.data.driver_name ? ` · ${cardResult.data.driver_name}` : ''}` }] : []
   const summary = buildSummaryFromAggregate(summaryResult.data)
   const statuses = summary.statuses.map((item) => item.status).sort()
   const fuelTypes = summary.fuelTypes
@@ -158,7 +159,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
             <div className="p-4">
               <TransactionFilters statuses={statuses} customers={customers} cards={cards} fuelTypes={fuelTypes} />
             </div>
-            {tableResult.error ? (
+            {tableResult.error || searchError ? (
               <p className="border-t p-8 text-center text-destructive">Transactions could not be loaded from Supabase.</p>
             ) : (
               <Table>
@@ -195,7 +196,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
             )}
           </CardContent>
           <CardFooter className="block border-t bg-card px-4 py-0">
-            <TablePagination page={page} pageSize={pageSize} total={tableResult.count ?? 0} itemLabel="transactions" searchParams={{ q, status, customer: customerId, card: cardId, fuelType, from: range.from, to: range.to, pageSize }} />
+            <TablePagination page={page} pageSize={pageSize} total={searchTotal ?? tableResult.count ?? 0} itemLabel="transactions" searchParams={{ q, status, customer: customerId, card: cardId, fuelType, from: range.from, to: range.to, pageSize }} />
           </CardFooter>
           </Card>
 
